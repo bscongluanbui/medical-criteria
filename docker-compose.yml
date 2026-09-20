@@ -60,6 +60,39 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  dashboard:
+    image: medical-criteria:${APP_VERSION:-local}
+    build:
+      context: .
+      target: runtime
+    command: [uvicorn, "app.dashboard:create_dashboard", --factory, --host, "0.0.0.0", --port, "3500", --no-proxy-headers]
+    environment:
+      DATABASE_URL: postgresql+psycopg://criteria:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/criteria
+      DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-https://criteria.bcanatomy.site}
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-3500}:3500"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3500/health/live', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   postgres-test:
     image: postgres:17
     profiles: [test]

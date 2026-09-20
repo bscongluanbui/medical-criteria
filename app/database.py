@@ -1,6 +1,6 @@
 """PostgreSQL production models; SQLite is used only in isolated tests."""
 from datetime import datetime, timezone
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, event
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -46,6 +46,38 @@ class Audit(Base):
     actor: Mapped[str] = mapped_column(String(100))
     reason: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class Account(Base):
+    __tablename__ = "dashboard_accounts"
+    __table_args__ = (CheckConstraint("role IN ('admin', 'reviewer')"),)
+    email: Mapped[str] = mapped_column(String(254), primary_key=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(20))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class WebSession(Base):
+    __tablename__ = "dashboard_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    email: Mapped[str] = mapped_column(ForeignKey("dashboard_accounts.email"))
+    csrf: Mapped[str] = mapped_column(String(64))
+    expires: Mapped[int] = mapped_column(Integer, index=True)
+
+
+class LoginAttempt(Base):
+    __tablename__ = "dashboard_login_attempts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    identity: Mapped[str] = mapped_column(String(64), index=True)
+    timestamp: Mapped[int] = mapped_column(Integer, index=True)
+
+
+class PublicSlot(Base):
+    __tablename__ = "dashboard_public_slots"
+    __table_args__ = (CheckConstraint("slot >= 1 AND slot <= 6"),)
+    slot: Mapped[int] = mapped_column(Integer, primary_key=True)
+    card_id: Mapped[str | None] = mapped_column(ForeignKey("card_heads.id"), nullable=True)
+    revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 def immutable(mapper, connection, target):

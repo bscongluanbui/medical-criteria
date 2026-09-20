@@ -2,6 +2,85 @@
 
 Nền tảng cơ sở tri thức tham khảo y khoa có nguồn và bác sĩ kiểm duyệt.
 
+## Dashboard + Cloudflare Tunnel (cổng 3500)
+
+Dashboard có trang công khai `/`, đăng nhập `/login` và khu vực biên tập `/dashboard`.
+Khách chỉ xem tối đa 6 card được admin chọn; bản nháp và nội dung chưa chọn không xuất hiện.
+Ban đầu thư viện trống, không tự tạo tiêu chuẩn y khoa giả. Đã có màn hình nguồn,
+card, editor tên/claim/ngưỡng + JSON đầy đủ, duyệt/thu hồi, lịch sử và chọn card công khai.
+PDF hiện mở bằng link nguồn chính thức; upload/viewer PDF nội bộ sẽ được bổ sung sau.
+
+### Cập nhật VPS hiện có
+
+```bash
+cd /home/ubuntu/criteria
+git pull --ff-only
+docker compose build
+docker compose run --rm migrate
+docker compose up -d --wait --wait-timeout 120
+docker compose exec dashboard python -m app.manage create-user YOUR_EMAIL --role admin
+```
+
+Thay `YOUR_EMAIL` bằng email đăng nhập. Nhập mật khẩu hai lần trong terminal (ít nhất
+12 ký tự). Không có mật khẩu mặc định hoặc đăng ký công khai. Mật khẩu không nằm trong
+Git, log hay JavaScript. Migration bổ sung các bảng account/session/public slots vào DB
+hiện có; không xóa các card hoặc nguồn cũ. Backup DB trước khi nâng cấp VPS.
+
+Các biến mặc định (thêm vào `.env` nếu cần đổi):
+
+```dotenv
+DASHBOARD_PORT=3500
+DASHBOARD_ORIGIN=https://criteria.bcanatomy.site
+```
+
+Cookie đăng nhập Secure/HttpOnly, session lưu hash trong DB và hết hạn sau 8 giờ.
+POST yêu cầu đúng Origin và CSRF token (riêng login kiểm tra Origin). HTTPS qua tunnel
+là đường truy cập đăng nhập được hỗ trợ; HTTP loopback chỉ dùng smoke test.
+Giới hạn 5 lần thử/email và 100 lần toàn hệ thống trong 15 phút; có thể gây khóa tạm
+khi bị tấn công, nên bổ sung rate limit/Turnstile tại Cloudflare khi mở rộng.
+
+### Đích Cloudflare Tunnel
+
+- `cloudflared` chạy trực tiếp trên VPS hoặc Docker host network: `http://127.0.0.1:3500`.
+- `cloudflared` chạy trong container: nối vào network `medical-criteria_default`,
+  cấu hình service là `http://dashboard:3500`. `localhost` trong container không phải host.
+  Khai báo network này lâu dài trong stack của tunnel; lệnh kết nối dưới đây chỉ áp dụng
+  cho container hiện tại:
+
+```bash
+docker network connect medical-criteria_default YOUR_CLOUDFLARED_CONTAINER
+```
+
+Hostname route: `criteria.bcanatomy.site`. Giữ nguyên tunnel/token hiện có; repository
+không tạo tunnel mới. Dashboard chỉ bind loopback trên host; không mở cổng 3500 public.
+Nếu muốn trang chủ công khai, không đặt Cloudflare Access chặn toàn hostname. App đã
+bảo vệ backend biên tập bằng đăng nhập. Tắt cache Cloudflare cho `/web/*`, `/dashboard`
+và `/public/*` (đặc biệt nếu có Cache Everything); ứng dụng gửi `Cache-Control: no-store`.
+
+### Tài khoản và công khai nội dung
+
+```bash
+docker compose exec dashboard python -m app.manage create-user REVIEWER_EMAIL --role reviewer
+docker compose exec dashboard python -m app.manage reset-password YOUR_EMAIL
+docker compose exec dashboard python -m app.manage disable-user REVIEWER_EMAIL
+```
+
+Reset/disable thu hồi session hiện tại. Reviewer được tạo/sửa/duyệt/thu hồi card;
+admin thêm quyền đăng ký nguồn và chọn 6 vị trí công khai. Audit ghi email từng người.
+Chọn public gắn với revision cụ thể: khi xuất bản revision mới, bản public cũ tự ẩn
+cho đến khi admin chọn lại. Thu hồi cũng ẩn ngay. Public response không chứa evidence
+quote nguyên văn, hash, đường dẫn archive hoặc danh tính reviewer.
+
+Kiểm tra từ VPS:
+
+```bash
+curl --fail http://127.0.0.1:3500/health/live
+curl --fail http://127.0.0.1:3500/public/cards
+```
+
+Không dùng `docker compose down --volumes` để cập nhật. Nếu rollback ứng dụng, checkout
+commit trước và build lại; giữ nguyên DB/volume, không xóa các bảng mới để hạ phiên bản.
+
 ## Quick start — Docker trên VPS
 
 ```bash
