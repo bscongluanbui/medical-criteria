@@ -9,12 +9,12 @@ git clone https://github.com/bscongluanbui/medical-criteria.git /home/ubuntu/cri
 cd /home/ubuntu/criteria
 python3 scripts/init_env.py
 docker compose up --build --wait --wait-timeout 120
-curl --fail http://127.0.0.1:8000/health/live
+curl --fail http://127.0.0.1:8001/health/live
 ```
 
 Yêu cầu Docker Engine + Docker Compose v2 và Python 3 để tạo `.env`. Script tạo password/token ngẫu nhiên, không in giá trị và không ghi đè `.env` đã tồn tại. `.env` bị loại khỏi Git và Docker build context. Nếu môi trường đã có `.env` cũ, đối chiếu các biến với `.env.example`.
 
-API có healthcheck kiểm tra readiness/database; chạy non-root với filesystem chỉ đọc. PostgreSQL lưu trong named volume và không mở cổng ra host. API chỉ bind `127.0.0.1:8000`; cần SSH tunnel/reverse proxy TLS khi truy cập từ bên ngoài. Không chạy `down --volumes` trên môi trường chứa dữ liệu cần giữ.
+API có healthcheck kiểm tra readiness/database; chạy non-root với filesystem chỉ đọc. PostgreSQL lưu trong named volume và không mở cổng ra host. API mặc định bind `127.0.0.1:8001`; cần SSH tunnel/reverse proxy TLS khi truy cập từ bên ngoài. Cổng nội bộ container vẫn là `8000`; đổi cổng host bằng `API_PORT` trong `.env`, rồi chạy `docker compose up -d api`. `.env` cũ không có biến này tự dùng `8001`. Không chạy `down --volumes` trên môi trường chứa dữ liệu cần giữ.
 
 ```bash
 docker compose ps                          # Trạng thái/health
@@ -74,7 +74,7 @@ python3 scripts/init_env.py
 docker compose config --quiet
 docker compose up --build -d
 docker compose ps
-curl --fail http://127.0.0.1:8000/health/live
+curl --fail http://127.0.0.1:8001/health/live
 ```
 
 Giá trị POSTGRES_PASSWORD nên dùng hex để an toàn trong connection URL. API key gắn với một vai trò cho chủ sở hữu trong P0; trước nhiều người sử dụng cần individual identities/token revocation. Trước expose mạng: TLS, access control, rate limits, request-size limits, tài khoản DB runtime tối thiểu thay vì schema owner, backup/restore và PostgreSQL integration tests.

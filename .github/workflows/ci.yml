@@ -19,7 +19,7 @@ jobs:
       - name: Start runtime
         run: docker compose up --build --wait --wait-timeout 120
       - name: Check liveness
-        run: curl --fail http://127.0.0.1:8000/health/live
+        run: curl --fail http://127.0.0.1:8001/health/live
       - name: Cleanup ephemeral CI resources
         if: always()
         run: docker compose --profile test down --volumes
