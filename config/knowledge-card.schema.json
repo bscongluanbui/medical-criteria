@@ -1,0 +1,604 @@
+{
+  "$defs": {
+    "Applicability": {
+      "additionalProperties": false,
+      "properties": {
+        "population": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Population",
+          "type": "string"
+        },
+        "clinical_context": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Clinical Context",
+          "type": "string"
+        },
+        "intended_use": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Intended Use",
+          "type": "string"
+        },
+        "prerequisites": {
+          "items": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Prerequisites",
+          "type": "array"
+        },
+        "exclusions": {
+          "items": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Exclusions",
+          "type": "array"
+        },
+        "required_inputs": {
+          "items": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Required Inputs",
+          "type": "array"
+        },
+        "missing_data_policy": {
+          "const": "insufficient_data",
+          "default": "insufficient_data",
+          "title": "Missing Data Policy",
+          "type": "string"
+        },
+        "discordance_policy": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Discordance Policy",
+          "type": "string"
+        },
+        "limitations": {
+          "items": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "population",
+        "clinical_context",
+        "intended_use",
+        "prerequisites",
+        "exclusions",
+        "required_inputs",
+        "discordance_policy",
+        "limitations"
+      ],
+      "title": "Applicability",
+      "type": "object"
+    },
+    "Claim": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "text_vi": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Text Vi",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Threshold"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "text_vi",
+        "evidence_ids"
+      ],
+      "title": "Claim",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "document_version_id": {
+          "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+          "title": "Document Version Id",
+          "type": "string"
+        },
+        "document_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Document Sha256",
+          "type": "string"
+        },
+        "pdf_page": {
+          "minimum": 1,
+          "title": "Pdf Page",
+          "type": "integer"
+        },
+        "printed_page": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Printed Page"
+        },
+        "section": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Section",
+          "type": "string"
+        },
+        "table": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table"
+        },
+        "table_cell": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Cell"
+        },
+        "footnote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Footnote"
+        },
+        "bbox": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bbox"
+        },
+        "quote": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Quote",
+          "type": "string"
+        },
+        "parser_version": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Parser Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "document_version_id",
+        "document_sha256",
+        "pdf_page",
+        "section",
+        "quote",
+        "parser_version"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "Logic": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "all",
+            "any",
+            "at_least",
+            "reference_only"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "claim_ids": {
+          "items": {
+            "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "minimum": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Minimum"
+        },
+        "description": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "claim_ids",
+        "description"
+      ],
+      "title": "Logic",
+      "type": "object"
+    },
+    "Measurement": {
+      "additionalProperties": false,
+      "properties": {
+        "modality": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Modality",
+          "type": "string"
+        },
+        "protocol": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "plane": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Plane",
+          "type": "string"
+        },
+        "landmarks": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Landmarks",
+          "type": "string"
+        },
+        "caliper_or_roi": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Caliper Or Roi",
+          "type": "string"
+        },
+        "quantity": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Quantity",
+          "type": "string"
+        },
+        "unit": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Unit",
+          "type": "string"
+        },
+        "quality_requirements": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Quality Requirements",
+          "type": "string"
+        },
+        "pitfalls": {
+          "items": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Pitfalls",
+          "type": "array"
+        }
+      },
+      "required": [
+        "modality",
+        "protocol",
+        "plane",
+        "landmarks",
+        "caliper_or_roi",
+        "quantity",
+        "unit",
+        "quality_requirements",
+        "pitfalls"
+      ],
+      "title": "Measurement",
+      "type": "object"
+    },
+    "Threshold": {
+      "additionalProperties": false,
+      "properties": {
+        "parameter": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Parameter",
+          "type": "string"
+        },
+        "operator": {
+          "enum": [
+            "<",
+            "<=",
+            "==",
+            ">=",
+            ">"
+          ],
+          "title": "Operator",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "parameter",
+        "operator",
+        "value",
+        "unit"
+      ],
+      "title": "Threshold",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "topic_id": {
+      "pattern": "^[a-zA-Z0-9_-]{1,100}$",
+      "title": "Topic Id",
+      "type": "string"
+    },
+    "name_vi": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Name Vi",
+      "type": "string"
+    },
+    "name_en": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Name En",
+      "type": "string"
+    },
+    "aliases": {
+      "items": {
+        "maxLength": 2000,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "maxItems": 30,
+      "title": "Aliases",
+      "type": "array"
+    },
+    "type": {
+      "enum": [
+        "diagnostic_criteria",
+        "severity_grading",
+        "classification",
+        "clinical_score",
+        "imaging_guideline",
+        "measurement",
+        "management_algorithm",
+        "follow_up",
+        "red_flags",
+        "differential_diagnosis",
+        "reporting_system"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "guideline_family": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Guideline Family",
+      "type": "string"
+    },
+    "guideline_module": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Guideline Module",
+      "type": "string"
+    },
+    "guideline_version": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Guideline Version",
+      "type": "string"
+    },
+    "modality": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Modality",
+      "type": "string"
+    },
+    "origin": {
+      "enum": [
+        "manual",
+        "ai_extracted",
+        "imported"
+      ],
+      "title": "Origin",
+      "type": "string"
+    },
+    "applicability": {
+      "$ref": "#/$defs/Applicability"
+    },
+    "measurement": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Measurement"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/Claim"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Claims",
+      "type": "array"
+    },
+    "logic": {
+      "$ref": "#/$defs/Logic"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "maxItems": 200,
+      "minItems": 1,
+      "title": "Evidence",
+      "type": "array"
+    }
+  },
+  "required": [
+    "topic_id",
+    "name_vi",
+    "name_en",
+    "type",
+    "guideline_family",
+    "guideline_module",
+    "guideline_version",
+    "modality",
+    "origin",
+    "applicability",
+    "claims",
+    "logic",
+    "evidence"
+  ],
+  "title": "Card",
+  "type": "object"
+}

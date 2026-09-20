@@ -1,0 +1,88 @@
+name: medical-criteria
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: criteria
+      POSTGRES_USER: criteria
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U criteria -d criteria"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  migrate:
+    image: medical-criteria:${APP_VERSION:-local}
+    build:
+      context: .
+      target: runtime
+    command: [python, -m, app.migrate]
+    healthcheck:
+      disable: true
+    environment:
+      DATABASE_URL: postgresql+psycopg://criteria:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/criteria
+    depends_on:
+      postgres:
+        condition: service_healthy
+  api:
+    image: medical-criteria:${APP_VERSION:-local}
+    build:
+      context: .
+      target: runtime
+    environment:
+      DATABASE_URL: postgresql+psycopg://criteria:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/criteria
+      READER_TOKEN: ${READER_TOKEN:?Set READER_TOKEN}
+      REVIEWER_TOKEN: ${REVIEWER_TOKEN:?Set REVIEWER_TOKEN}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  postgres-test:
+    image: postgres:17
+    profiles: [test]
+    environment:
+      POSTGRES_DB: criteria_test
+      POSTGRES_USER: criteria_test
+      POSTGRES_PASSWORD: isolated-test-only
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U criteria_test -d criteria_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  test:
+    profiles: [test]
+    build:
+      context: .
+      target: test
+    environment:
+      TEST_DATABASE_URL: postgresql+psycopg://criteria_test:isolated-test-only@postgres-test:5432/criteria_test
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+volumes:
+  postgres_data:

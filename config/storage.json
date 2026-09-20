@@ -1,0 +1,10 @@
+{
+  "project_root": "/home/ubuntu/criteria",
+  "library_root": "/home/ubuntu/rclone/papers",
+  "library_read_only": true,
+  "cache_root": "/home/ubuntu/criteria/data/cache",
+  "retained_sources_root": "/home/ubuntu/criteria/data/retained_sources",
+  "parsed_root": "/home/ubuntu/criteria/data/parsed",
+  "mount_management": "external",
+  "scan_mode": "inventory_first_hash_on_ingest"
+}

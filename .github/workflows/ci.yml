@@ -1,0 +1,25 @@
+name: Docker tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create ephemeral local configuration
+        run: python3 scripts/init_env.py
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Build and test SQLite + PostgreSQL
+        run: docker compose --profile test run --build --rm test
+      - name: Start runtime
+        run: docker compose up --build --wait --wait-timeout 120
+      - name: Check liveness
+        run: curl --fail http://127.0.0.1:8000/health/live
+      - name: Cleanup ephemeral CI resources
+        if: always()
+        run: docker compose --profile test down --volumes

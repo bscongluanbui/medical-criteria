@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+*.db
+data/
+logs/
+artifacts/
+VERIFICATION.txt
+DOCKER_VERIFICATION.txt
+*.pem
+*.key
+# Local change-record helpers depend on private, ignored artifacts.
+ROLLBACK.sh
+scripts/check_plan.py
+scripts/update_plan.py
+scripts/rollback_plan.py
