@@ -248,8 +248,9 @@ def main():
             while True:
                 try:
                     if future is None or future.done():
-                        if future:
-                            future.result()
+                        finished, future = future, None
+                        if finished:
+                            finished.result()
                         future = executor.submit(queue.process, pipeline)
                     updates = telegram.call('getUpdates', {'offset': queue.offset(), 'timeout': 10, 'limit': 30, 'allowed_updates': ['message']})
                     for update in updates:

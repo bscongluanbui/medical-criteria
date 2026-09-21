@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from uuid import uuid4
 from urllib.parse import urljoin, urlparse, parse_qs
 import xml.etree.ElementTree as ET
 import httpx
@@ -144,9 +145,9 @@ def retain_pdf(root, data):
         if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
             raise SourceError('RETAINED_SOURCE_HASH_MISMATCH')
         return sha
-    temp = root / ('.'+sha+'.tmp')
+    temp = root / ('.'+sha+'.'+uuid4().hex+'.tmp')
     try:
-        with temp.open('wb') as output:
+        with temp.open('xb') as output:
             output.write(data)
             output.flush()
             os.fsync(output.fileno())
