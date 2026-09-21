@@ -1,6 +1,8 @@
 # Update VPS from GHCR
 
-Runtime image: `ghcr.io/bscongluanbui/medical-criteria:latest` (Linux amd64).
+Runtime image: `ghcr.io/bscongluanbui/medical-criteria:latest` (Linux amd64 and arm64/v8).
+Docker automatically selects the architecture of the VPS from the same image tag.
+CI tests run on both native amd64 and ARM64 runners before multi-platform publication.
 Every successful main-branch CI run publishes `latest` and immutable `sha-<full-commit>`.
 The test job runs SQLite, PostgreSQL and dashboard/API health checks before publication.
 
