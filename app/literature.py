@@ -22,7 +22,7 @@ class SourceError(ValueError):
     pass
 
 
-def fetch(url, params=None, limit=MAX_DOWNLOAD):
+def _fetch(url, params=None, limit=MAX_DOWNLOAD):
     """HTTPS only, fixed scientific hosts; revalidate every redirect, no credentials."""
     with httpx.Client(timeout=45, trust_env=False, follow_redirects=False) as client:
         for _ in range(5):
@@ -43,6 +43,15 @@ def fetch(url, params=None, limit=MAX_DOWNLOAD):
                         raise SourceError('SOURCE_TOO_LARGE')
                 return bytes(raw)
     raise SourceError('SOURCE_REDIRECT_LIMIT')
+
+
+def fetch(url, params=None, limit=MAX_DOWNLOAD):
+    try:
+        return _fetch(url, params=params, limit=limit)
+    except httpx.TimeoutException:
+        raise SourceError('SOURCE_TIMEOUT') from None
+    except httpx.HTTPError:
+        raise SourceError('SOURCE_TRANSPORT_ERROR') from None
 
 
 class Literature:

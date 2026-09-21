@@ -200,13 +200,16 @@ class BotQueue:
         except NeedsReview as exc:
             with self.sessions.begin() as db:
                 record = db.get(ResearchJob, job.id)
+                from app.research_errors import record_failure
                 record.status, record.error_code = 'needs_review', str(exc)[:100]
+                record_failure(record, exc)
         except Exception as exc:
             with self.sessions.begin() as db:
                 record = db.get(ResearchJob, job.id)
                 record.status = 'retry' if record.attempts < self.max_attempts else 'failed'
                 record.available_at = int(time.time())+120
-                record.error_code = str(exc)[:100] if isinstance(exc, AIError) else type(exc).__name__[:100]
+                from app.research_errors import record_failure
+                record_failure(record, exc)
             LOG.warning('research failed job=%s type=%s', job.id[:12], type(exc).__name__)
         return True
 

@@ -41,7 +41,10 @@ class RoutedResearch:
         except Exception:
             if key != job.id:
                 with self.sessions.begin() as db:
-                    db.get(ResearchJob,key).status='needs_review'
+                    target_record=db.get(ResearchJob,key)
+                    target_record.status='needs_review'
+                    origin_record=db.get(ResearchJob,job.id)
+                    origin_record.provenance={**(origin_record.provenance or {}), **(target_record.provenance or {})}
             raise
         with self.sessions.begin() as db:
             row=db.get(ResearchJob,key)

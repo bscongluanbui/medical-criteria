@@ -2,6 +2,7 @@
 import hashlib
 import json
 import re
+from pydantic import ValidationError
 from sqlalchemy import select
 from app.database import Topic, Audit, CardHead, Document, ResearchJob, Revision
 from app.literature import Literature, SourceError, parse_pdf, retain_pdf
@@ -23,6 +24,12 @@ class ResearchPipeline:
         self.literature = literature or Literature()
         self.service = KnowledgeService(sessions)
 
+    def progress(self, job, stage, **details):
+        with self.sessions.begin() as db:
+            record = db.get(ResearchJob, job.id)
+            if record:
+                record.provenance = {**(record.provenance or {}), 'stage': stage, **details}
+
     def run(self, job):
         card_id = 'ai-'+job.id[:32]
         # Resume after a crash without generating/overwriting another revision.
@@ -35,15 +42,18 @@ class ResearchPipeline:
             record = db.get(ResearchJob, job.id)
             if record:
                 record.provenance = {**(record.provenance or {}), 'configured_model': self.ai.model}
+        self.progress(job, 'search_plan')
         plan = self.ai.ask('Classify a general radiology knowledge topic, NOT a patient case. Return {"eligible":boolean,"search_terms":string}. Use concise English scientific keywords for diagnostic criteria, imaging measurement, classification or guidelines. If it contains identifiable patient information, is a patient case, or is unrelated, eligible=false.', {'topic': job.query})
         if plan.get('eligible') is not True:
             raise NeedsReview('GENERAL_KNOWLEDGE_TOPIC_REQUIRED')
         terms = plan.get('search_terms')
         if not isinstance(terms, str) or not 1 <= len(terms) <= 250:
             raise NeedsReview('INVALID_SEARCH_PLAN')
+        self.progress(job, 'source_search', search_terms=terms)
         candidates = self.literature.search(terms)
         if not candidates:
             raise NeedsReview('NO_OPEN_ACCESS_SOURCE')
+        self.progress(job, 'source_selection', candidate_ids=[c['pmcid'] for c in candidates])
         selection = self.ai.ask('Choose up to 3 candidate PMC IDs that directly document the requested criteria. Prefer primary guideline/consensus/validation publications over reviews. Return {"pmcids":[string]}. Empty list if no suitable evidence. Do not invent IDs.', {'topic': job.query, 'candidates': candidates})
         ids = selection.get('pmcids', [])
         if not isinstance(ids, list) or not 1 <= len(ids) <= 3 or any(not isinstance(i, str) for i in ids):
@@ -51,14 +61,18 @@ class ResearchPipeline:
         by_id = {c['pmcid']: c for c in candidates}
         if not set(ids) <= by_id.keys():
             raise NeedsReview('SOURCE_ID_NOT_IN_SEARCH')
-        sources, documents = [], []
+        sources, documents, source_failures = [], [], []
+        self.progress(job, 'source_download')
         for pmcid in dict.fromkeys(ids):
             candidate = by_id[pmcid]
             try:
                 data, license_note = self.literature.retrieve(candidate)
                 pages = parse_pdf(data)
                 sha = retain_pdf(self.source_root, data)
-            except (SourceError, OSError):
+            except (SourceError, OSError) as exc:
+                from app.research_errors import error_details
+                source_failures.append({'pmcid':pmcid, **error_details(exc)})
+                self.progress(job, 'source_download', source_failures=source_failures)
                 continue
             source = SourceVersion(id='pdf-'+sha[:40], source_id=pmcid,
                 title=candidate['title'], organization=candidate['authors'][:2000] or 'PMC indexed publication',
@@ -70,11 +84,28 @@ class ResearchPipeline:
             documents.append({'source': source.model_dump(), 'pages': [{'pdf_page': i+1, 'text': text} for i, text in enumerate(pages)]})
         if not sources:
             raise NeedsReview('NO_READABLE_RETAINED_PDF')
+        self.progress(job, 'card_extraction')
         raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. origin=ai_extracted. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
                            {'topic': job.query, 'requested_route': (job.provenance or {}).get('route'), 'card_schema': Card.model_json_schema(), 'documents': documents})
         if not raw.get('card'):
             raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
-        card = Card.model_validate(raw['card'])
+        try:
+            card = Card.model_validate(raw['card'])
+        except ValidationError as exc:
+            from app.research_errors import error_details
+            details = error_details(exc)
+            self.progress(job, 'card_schema_repair', schema_errors=details['schema_errors'])
+            # Exactly one repair using the same retained sources; never silently relax schema.
+            repaired = self.ai.ask('Repair the JSON card to match the schema. Return {"card":object} or {"card":null} if source evidence is insufficient. Correct structure only using supplied source pages. Do not invent evidence, change thresholds from memory, or remove applicability/limitations to make validation pass. Preserve the requested topic/type/modality. Null is preferable to unsupported content.',
+                {'draft':raw['card'], 'validation_errors':details['schema_errors'],
+                 'card_schema':Card.model_json_schema(), 'requested_route':(job.provenance or {}).get('route'), 'documents':documents})
+            if not repaired.get('card'):
+                raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
+            try:
+                card = Card.model_validate(repaired['card'])
+            except ValidationError as final_error:
+                self.progress(job, 'card_schema_failed', schema_errors=error_details(final_error)['schema_errors'])
+                raise NeedsReview('CARD_SCHEMA_INVALID_AFTER_REPAIR') from None
         if card.origin != 'ai_extracted':
             raise NeedsReview('INVALID_ORIGIN')
         route = (job.provenance or {}).get('route')
@@ -102,6 +133,7 @@ class ResearchPipeline:
             if len(quote) < 20 or quote not in normalized_quote(pages[evidence.pdf_page-1]['text']):
                 raise NeedsReview('QUOTE_NOT_ON_CITED_PAGE')
             evidence.parser_version = 'pypdf-6.19.0-layout'
+        self.progress(job, 'evidence_self_check')
         check = self.ai.ask('Independently re-check this draft against supplied source pages. Return {"context_supported":boolean,"claims":[{"id":string,"supported":boolean}],"notes":string}. Check every claim, numeric operator/value/unit, measurement, population, logic, source version, exceptions and suitability for the requested topic. Supported must be false for ambiguous tables, absent footnotes, or unsupported details. Never equate source availability with truth.',
                             {'topic': job.query, 'card': card.model_dump(mode='json'), 'documents': documents})
         claims = check.get('claims')
@@ -111,6 +143,7 @@ class ResearchPipeline:
             or any(not isinstance(c, dict) or c.get('supported') is not True for c in claims)):
             raise NeedsReview('AI_EVIDENCE_CHECK_FAILED')
         # Persist sources + revision + model provenance atomically before publication.
+        self.progress(job, 'persist_card')
         payload = card.model_dump(mode='json')
         from app.service import digest
         with self.sessions.begin() as db:
