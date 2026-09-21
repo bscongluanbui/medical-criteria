@@ -16,7 +16,7 @@ def migrate(engine):
               RAISE EXCEPTION 'immutable record: append a new revision/event';
             END $$
         """))
-        for table in ("document_versions", "card_revisions", "audit_events"):
+        for table in ("document_versions", "card_revisions", "audit_events", "gpt_audit_packages", "gpt_audit_results"):
             db.execute(text(f"DROP TRIGGER IF EXISTS immutable_row ON {table}"))
             db.execute(text(f"CREATE TRIGGER immutable_row BEFORE UPDATE OR DELETE ON {table} FOR EACH ROW EXECUTE FUNCTION reject_immutable_change()"))
 

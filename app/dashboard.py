@@ -14,6 +14,7 @@ from app.auth import Auth
 from app.database import Audit, CardHead, Document, PublicSlot, Revision, connect
 from app.schemas import Identifier, RevisionRequest, ReviewRequest, SourceVersion, StrictModel, WithdrawRequest
 from app.service import Conflict, KnowledgeService, NotFound
+from app.schemas import PreliminaryRequest, AuditImport
 
 
 class Credentials(StrictModel):
@@ -162,7 +163,7 @@ def create_dashboard(database_url=None, origin=None, secure_cookies=True):
                     if source:
                         citations.append({"title": source.payload["title"], "url": source.payload["official_url"], "page": e["pdf_page"]})
                 # Explicit whitelist: no raw quotes, local archive paths, drafts or audit identities.
-                results.append({"id": revision.card_id, "revision": revision.number, "name_vi": c["name_vi"], "name_en": c["name_en"], "modality": c["modality"], "version": c["guideline_version"], "claims": [{"text": claim["text_vi"], "threshold": claim.get("threshold")} for claim in c["claims"]], "applicability": c["applicability"], "measurement": c.get("measurement"), "logic": c["logic"], "sources": citations})
+                results.append({"id": revision.card_id, "revision": revision.number, "name_vi": c["name_vi"], "name_en": c["name_en"], "modality": c["modality"], "version": c["guideline_version"], "claims": [{"text": claim["text_vi"], "threshold": claim.get("threshold")} for claim in c["claims"]], "applicability": c["applicability"], "measurement": c.get("measurement"), "logic": c["logic"], "sources": citations, "verification": service.verification(db, revision.card_id, revision.number)})
             return {"results": results}
 
     @app.get("/web/cards")
@@ -172,7 +173,7 @@ def create_dashboard(database_url=None, origin=None, secure_cookies=True):
             rows = db.execute(select(CardHead, Revision).join(Revision, (Revision.card_id == CardHead.id) & (Revision.number == CardHead.latest)).order_by(CardHead.id).limit(500)).all()
             for head, revision in rows:
                 withdrawn = db.scalar(select(Audit.id).where(Audit.card_id == head.id, Audit.revision == head.latest, Audit.action == "withdrawn"))
-                results.append({"id": head.id, "latest": head.latest, "published": head.published, "status": "withdrawn" if withdrawn else ("published" if head.published == head.latest else "pending"), "card": revision.payload})
+                results.append({"id": head.id, "latest": head.latest, "published": head.published, "status": "withdrawn" if withdrawn else ("published" if head.published == head.latest else "pending"), "card": revision.payload, "verification": service.verification(db, head.id, head.latest)})
             return {"results": results}
 
     @app.get("/web/sources")
@@ -191,6 +192,18 @@ def create_dashboard(database_url=None, origin=None, secure_cookies=True):
     @app.post("/web/cards/{card_id}/publish")
     def publish(card_id: Identifier, body: ReviewRequest, account=Depends(write)):
         return service.publish(card_id, body.expected_revision, account["email"], body.reason, body.evidence_checked, body.applicability_checked)
+
+    @app.post("/web/cards/{card_id}/publish-preliminary")
+    def preliminary(card_id: Identifier, body: PreliminaryRequest, account=Depends(write)):
+        return service.publish_preliminary(card_id, body.expected_revision, account["email"], body.reason, body.model)
+
+    @app.post("/web/cards/{card_id}/audit-package")
+    def audit_package(card_id: Identifier, body: WithdrawRequest, account=Depends(write)):
+        return service.prepare_audit(card_id, body.expected_revision, account["email"])
+
+    @app.post("/web/audit-results")
+    def audit_import(body: AuditImport, account=Depends(write)):
+        return service.import_audit(body, account["email"])
 
     @app.post("/web/cards/{card_id}/withdraw")
     def withdraw(card_id: Identifier, body: WithdrawRequest, account=Depends(write)):

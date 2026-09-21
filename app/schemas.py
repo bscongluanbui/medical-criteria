@@ -157,3 +157,28 @@ class ReviewRequest(StrictModel):
 class WithdrawRequest(StrictModel):
     expected_revision: int = Field(ge=1)
     reason: Text
+
+
+class PreliminaryRequest(WithdrawRequest):
+    model: Text
+
+
+class AuditClaim(StrictModel):
+    claim_id: Identifier
+    result: Literal["SUPPORTED", "CONTRADICTED", "INDETERMINATE"]
+    evidence_ids: list[Identifier] = Field(min_length=1)
+    notes: Text
+
+
+class AuditImport(StrictModel):
+    audit_package_id: Identifier
+    card_id: Identifier
+    revision: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_hashes: dict[Identifier, str]
+    model: Text
+    overall: Literal["GPT_VERIFIED", "GPT_CONFLICT", "GPT_INDETERMINATE"]
+    claims: list[AuditClaim] = Field(min_length=1, max_length=100)
+    context_result: Literal["SUPPORTED", "CONTRADICTED", "INDETERMINATE"]
+    context_notes: Text
+    notes: Text

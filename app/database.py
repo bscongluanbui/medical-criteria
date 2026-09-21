@@ -80,11 +80,27 @@ class PublicSlot(Base):
     revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class AuditPackage(Base):
+    __tablename__ = "gpt_audit_packages"
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    card_id: Mapped[str] = mapped_column(ForeignKey("card_heads.id"))
+    revision: Mapped[int] = mapped_column(Integer)
+    payload: Mapped[dict] = mapped_column(JSON)
+
+
+class AuditResult(Base):
+    __tablename__ = "gpt_audit_results"
+    package_id: Mapped[str] = mapped_column(ForeignKey("gpt_audit_packages.id"), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    imported_by: Mapped[str] = mapped_column(String(254))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 def immutable(mapper, connection, target):
     raise ValueError("immutable record: create a new revision/event instead")
 
 
-for model in (Document, Revision, Audit):
+for model in (Document, Revision, Audit, AuditPackage, AuditResult):
     event.listen(model, "before_update", immutable)
     event.listen(model, "before_delete", immutable)
 

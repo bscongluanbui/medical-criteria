@@ -35,7 +35,7 @@ function renderFeatured(){
     const slot=slots.find(s=>s.slot===i+1), published=cards.filter(c=>c.published);
     const current=slot?.card_id?cards.find(c=>c.id===slot.card_id):null;
     const stale=slot?.card_id&&(!current||current.published!==slot.revision);
-    return `<div class="featured-row"><span class="featured-number">0${i+1}</span><div><label for="slot-${i+1}">Vị trí ${i+1}${stale?' · Bản cũ đang được ẩn':''}</label><select id="slot-${i+1}" ${account.role==='admin'?'':'disabled'}><option value="">Không hiển thị</option>${published.map(c=>`<option value="${esc(c.id)}" ${!stale&&c.id===slot?.card_id?'selected':''}>${esc(c.card.name_vi)} · bản đã duyệt r${c.published}</option>`).join('')}</select></div><button class="button outline" data-slot="${i+1}" ${account.role==='admin'?'':'disabled'}>Lưu vị trí</button></div>`;
+    return `<div class="featured-row"><span class="featured-number">0${i+1}</span><div><label for="slot-${i+1}">Vị trí ${i+1}${stale?' · Bản cũ đang được ẩn':''}</label><select id="slot-${i+1}" ${account.role==='admin'?'':'disabled'}><option value="">Không hiển thị</option>${published.map(c=>`<option value="${esc(c.id)}" ${!stale&&c.id===slot?.card_id?'selected':''}>${esc(c.card.name_vi)} · bản xuất bản r${c.published}</option>`).join('')}</select></div><button class="button outline" data-slot="${i+1}" ${account.role==='admin'?'':'disabled'}>Lưu vị trí</button></div>`;
   }).join('');
   document.querySelectorAll('[data-slot]').forEach(button=>button.addEventListener('click',()=>action(button,async()=>{const slot=Number(button.dataset.slot),id=$(`#slot-${slot}`).value,c=cards.find(c=>c.id===id);await api('/web/featured',{slot,card_id:id||null,revision:c?.published||null});await refresh();notice('Đã cập nhật thư viện công khai.');})));
 }
@@ -52,7 +52,9 @@ async function openCard(row){
   $('#claim-editor').innerHTML=selected.card.claims.map((c,i)=>`<div class="claim-input"><label for="claim-${i}">Claim ${i+1} · ${esc(c.id)}</label><textarea id="claim-${i}" rows="3">${esc(c.text_vi)}</textarea>${c.threshold?`<label>Ngưỡng · ${esc(c.threshold.parameter)}</label><div class="threshold-row"><select aria-label="Toán tử claim ${i+1}" id="operator-${i}">${['<','<=','==','>=','>'].map(v=>`<option ${v===c.threshold.operator?'selected':''}>${esc(v)}</option>`).join('')}</select><input id="value-${i}" aria-label="Giá trị claim ${i+1}" value="${esc(c.threshold.value)}"><input id="unit-${i}" aria-label="Đơn vị claim ${i+1}" value="${esc(c.threshold.unit)}"></div>`:''}</div>`).join('');
   $('#evidence-list').innerHTML=selected.card.evidence.map(e=>{const s=sources.find(s=>s.id===e.document_version_id);return `<div class="evidence-item"><strong>${esc(s?.title||e.document_version_id||'Chưa chọn nguồn')}</strong><p class="fine-print">Trang ${e.pdf_page} · ${esc(e.section||'Chưa có mục')}</p><blockquote>${esc(e.quote||'Điền trích dẫn nguyên văn trong cấu trúc JSON.')}</blockquote>${s?`<a href="${esc(safeURL(s.official_url))}" target="_blank" rel="noopener noreferrer">Mở nguồn gốc ↗</a>`:''}</div>`;}).join('');
   $('#evidence-checked').checked=false;$('#applicability-checked').checked=false;$('#review-reason').value='';
-  $('#publish').disabled=!row||row.status!=='pending';$('#withdraw').disabled=!row?.published;
+  $('#publish').disabled=!row||row.status==='withdrawn'||row.verification?.doctor==='DOCTOR_VERIFIED';
+  $('#verification-status').textContent=row?verificationText(row.verification):'Chưa lưu revision';
+  $('#publish-preliminary').disabled=!row||row.status!=='pending';$('#export-audit').disabled=!row;$('#import-audit').disabled=!row;$('#audit-result').value='';$('#gemini-model').value=row?.verification?.gemini_model||'';$('#withdraw').disabled=!row?.published;
   $('#history-list').textContent=row?'Đang tải…':'Chưa có lịch sử.';
   if(!$('#editor').open)$('#editor').showModal();
   if(row){try{const history=await api(`/web/cards/${encodeURIComponent(row.id)}/history`);$('#history-list').innerHTML=history.map(h=>`<div class="history-item"><strong>r${h.revision} · ${esc(h.action)}</strong><br>${esc(h.actor)} · ${esc(new Date(h.at).toLocaleString('vi-VN'))}<p>${esc(h.reason)}</p></div>`).join('');}catch(e){notice(e.message,true,'#editor-error');}}
@@ -73,3 +75,20 @@ $('#source-fields').innerHTML=sourceFields.map(([id,label,type])=>`<div><label f
 $('#new-source').addEventListener('click',()=>{$('#source-error').classList.add('hidden');$('#source-dialog').showModal();});
 $('#source-form').addEventListener('submit',event=>{event.preventDefault();action(event.target.querySelector('button[type="submit"]'),async()=>{const data=Object.fromEntries(new FormData(event.target));data.pdf_pages=Number(data.pdf_pages);data.doi=data.doi||null;data.retention='retained_source';await api('/web/sources',data);event.target.reset();$('#source-dialog').close();await refresh();notice('Đã đăng ký phiên bản tài liệu.');},'#source-error');});
 (async()=>{try{account=await api('/web/session');$('#account-name').textContent=`${account.email} · ${account.role==='admin'?'Quản trị':'Kiểm duyệt'}`;document.querySelectorAll('.admin-only').forEach(el=>el.classList.toggle('hidden',account.role!=='admin'));await refresh();}catch(e){notice(e.message,true);}})();
+
+function verificationText(v){return `Gemini: ${v?.gemini||'NOT_RECORDED'} · ChatGPT: ${v?.chatgpt||'GPT_UNVERIFIED'} · Bác sĩ: ${v?.doctor||'DOCTOR_UNVERIFIED'}`;}
+$('#publish-preliminary').addEventListener('click',e=>action(e.currentTarget,async()=>{
+ if(JSON.stringify(editedCard())!==JSON.stringify(selected.card))throw new Error('Lưu thay đổi thành revision mới trước khi công bố.');
+ await api(`/web/cards/${selected.id}/publish-preliminary`,{expected_revision:selected.latest,reason:$('#review-reason').value,model:$('#gemini-model').value});
+ $('#editor').close();await refresh();notice('Đã công bố bản AI sơ bộ, chưa được bác sĩ duyệt. Chọn vị trí thư viện để hiển thị trên web.');
+},'#editor-error'));
+$('#export-audit').addEventListener('click',e=>action(e.currentTarget,async()=>{
+ if(JSON.stringify(editedCard())!==JSON.stringify(selected.card))throw new Error('Lưu thay đổi trước khi xuất audit.');
+ const pkg=await api(`/web/cards/${selected.id}/audit-package`,{expected_revision:selected.latest,reason:'ChatGPT Web audit'});
+ const url=URL.createObjectURL(new Blob([JSON.stringify(pkg,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`audit-${pkg.audit_package_id}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ notice('Đã tải snapshot. Đưa snapshot và đúng tài liệu nguồn lên Google Drive.');
+},'#editor-error'));
+$('#import-audit').addEventListener('click',e=>action(e.currentTarget,async()=>{
+ const result=JSON.parse($('#audit-result').value);if(result.card_id!==selected.id)throw new Error('Kết quả thuộc card khác.');
+ const saved=await api('/web/audit-results',result);await refresh();await openCard(cards.find(c=>c.id===selected.id));notice(saved.historical?'Đã lưu audit vào phiên bản cũ, không đổi trạng thái phiên bản mới.':'Đã ghi nhận kết quả ChatGPT audit.');
+},'#editor-error'));

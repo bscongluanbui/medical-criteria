@@ -5,6 +5,7 @@ import unicodedata
 from sqlalchemy import select, update
 from app.database import Audit, CardHead, Document, Revision
 from app.schemas import Card, SourceVersion
+from app.verification import VerificationWorkflow
 
 
 class Conflict(ValueError):
@@ -24,7 +25,7 @@ def digest(payload):
     return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-class KnowledgeService:
+class KnowledgeService(VerificationWorkflow):
     def __init__(self, sessions):
         self.sessions = sessions
 
@@ -71,10 +72,10 @@ class KnowledgeService:
             head = db.scalar(select(CardHead).where(CardHead.id == card_id).with_for_update())
             if head is None:
                 raise NotFound(card_id)
-            if head.latest != expected or head.published == expected:
+            if head.latest != expected or (head.published == expected and self.verification(db, card_id, expected)["doctor"] == "DOCTOR_VERIFIED"):
                 raise Conflict("stale or already published revision")
             # Withdrawal is terminal for that revision: corrected content needs a new revision.
-            withdrawn = db.scalar(select(Audit.id).where(Audit.card_id == card_id, Audit.revision == expected, Audit.action == "withdrawn"))
+            withdrawn = db.scalar(select(Audit.id).where(Audit.card_id == card_id, Audit.revision == expected, Audit.action.in_(["withdrawn", "audit_blocked"])))
             if withdrawn:
                 raise Conflict("withdrawn revision requires a new revision")
             revision = db.scalar(select(Revision).where(Revision.card_id == card_id, Revision.number == expected))
@@ -100,7 +101,8 @@ class KnowledgeService:
             if revision is None:
                 raise NotFound(card_id)
             event = db.scalar(select(Audit).where(Audit.card_id == card_id, Audit.revision == revision.number, Audit.action == "published").order_by(Audit.id.desc()))
-            return {"card_id": card_id, "revision": revision.number, "content_sha256": revision.content_sha256, "review_status": "verified", "reviewed_at": event.created_at.isoformat(), "card": revision.payload}
+            verification = self.verification(db, card_id, revision.number)
+            return {"card_id": card_id, "revision": revision.number, "content_sha256": revision.content_sha256, "review_status": "verified" if verification["doctor"] == "DOCTOR_VERIFIED" else "ai_preliminary", "reviewed_at": event.created_at.isoformat() if event else None, "verification": verification, "card": revision.payload}
 
     def search(self, query):
         # Exact normalized names and aliases only in P0; ambiguous results stay a list.
@@ -112,7 +114,7 @@ class KnowledgeService:
                 card = row.payload
                 terms = [row.card_id, card["topic_id"], card["name_vi"], card["name_en"], *card["aliases"]]
                 if query in map(normalize, terms):
-                    results.append({"card_id": row.card_id, "revision": row.number, "name_vi": card["name_vi"], "modality": card["modality"], "guideline_version": card["guideline_version"]})
+                    results.append({"card_id": row.card_id, "revision": row.number, "name_vi": card["name_vi"], "modality": card["modality"], "guideline_version": card["guideline_version"], "verification": self.verification(db, row.card_id, row.number)})
             return results
 
     def pending(self):

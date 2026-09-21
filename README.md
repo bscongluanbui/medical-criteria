@@ -1,3 +1,7 @@
+# Release: revision-bound AI publication and ChatGPT audit
+
+See [deployment and audit workflow](docs/DEPLOYMENT.md). Default Compose now pulls GHCR images; use the build override for local builds. Older build/publication instructions below are superseded by this release guide.
+
 # Medical Criteria — P0
 
 Nền tảng cơ sở tri thức tham khảo y khoa có nguồn và bác sĩ kiểm duyệt.

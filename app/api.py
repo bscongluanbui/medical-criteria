@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from app.database import connect
 from app.schemas import RevisionRequest, ReviewRequest, SourceVersion, WithdrawRequest
 from app.service import Conflict, KnowledgeService, NotFound
+from app.schemas import PreliminaryRequest, AuditImport
 
 CardID = Annotated[str, Path(pattern=r"^[a-zA-Z0-9_-]{1,100}$")]
 
@@ -103,6 +104,18 @@ def create_app(database_url=None, tokens=None):
     @app.post("/review/{card_id}/publish")
     def publish(card_id: CardID, body: ReviewRequest, actor=Depends(review)):
         return service.publish(card_id, body.expected_revision, actor, body.reason, body.evidence_checked, body.applicability_checked)
+
+    @app.post("/review/{card_id}/publish-preliminary")
+    def preliminary(card_id: CardID, body: PreliminaryRequest, actor=Depends(review)):
+        return service.publish_preliminary(card_id, body.expected_revision, actor, body.reason, body.model)
+
+    @app.post("/review/{card_id}/audit-package")
+    def audit_package(card_id: CardID, body: WithdrawRequest, actor=Depends(review)):
+        return service.prepare_audit(card_id, body.expected_revision, actor)
+
+    @app.post("/review/audit-results")
+    def audit_import(body: AuditImport, actor=Depends(review)):
+        return service.import_audit(body, actor)
 
     @app.post("/review/{card_id}/withdraw")
     def withdraw(card_id: CardID, body: WithdrawRequest, actor=Depends(review)):
