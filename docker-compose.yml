@@ -84,6 +84,56 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  drive-sync:
+    profiles: [drive]
+    image: ${APP_IMAGE:-ghcr.io/bscongluanbui/medical-criteria:latest}
+    command: [python, -m, app.drive_sync]
+    environment:
+      DATABASE_URL: postgresql+psycopg://criteria:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/criteria
+      DRIVE_ROOT: /drive
+      CRITERIA_DRIVE_ROOT: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}
+      DRIVE_SYNC_INTERVAL: ${DRIVE_SYNC_INTERVAL:-60}
+      DRIVE_AUTO_PREPARE: ${DRIVE_AUTO_PREPARE:-true}
+    volumes:
+      - type: bind
+        source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/source_pdf
+        target: /drive/source_pdf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/audit_packages
+        target: /drive/audit_packages
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/audit_results
+        target: /drive/audit_results
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import os,time; from pathlib import Path; assert time.time()-float(Path('/tmp/drive-sync-heartbeat').read_text()) < max(15,int(os.getenv('DRIVE_SYNC_INTERVAL','60')))*3+60"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   postgres-test:
     image: postgres:17
     profiles: [test]

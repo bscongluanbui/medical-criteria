@@ -36,12 +36,14 @@ def test_preliminary_public_badges_and_doctor_upgrade(client):
     assert preliminary(client, headers, 1).status_code == 422
     ai_card(client, headers)
     assert preliminary(client, headers).status_code == 200
+    assert client.app.state.service.pending()[0]['revision'] == 2
     assert client.post('/web/featured', headers=headers, json={'slot': 1, 'card_id': 'test', 'revision': 2}).status_code == 200
     row = client.get('/public/cards').json()['results'][0]
     assert row['verification']['doctor'] == 'DOCTOR_UNVERIFIED'
     assert row['verification']['gemini'] == 'GEMINI_CREATED'
     assert row['verification']['chatgpt'] == 'GPT_UNVERIFIED'
     assert publish(client, headers, 2).status_code == 200
+    assert client.app.state.service.pending() == []
     assert client.get('/public/cards').json()['results'][0]['verification']['doctor'] == 'DOCTOR_VERIFIED'
     ai_card(client, headers, 2)
     assert preliminary(client, headers, 3).status_code == 409

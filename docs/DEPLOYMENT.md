@@ -81,3 +81,81 @@ Reusable prompt:
 
 The current release does not call Gemini, run a Telegram worker, upload PDFs to Drive,
 or schedule ChatGPT Web. Those integrations need separate configuration and tests.
+
+## Automatic audit exchange using the existing Drive mount
+
+The optional `drive-sync` service now exports immutable audit packages and imports
+results. It does not mount Drive itself, copy the whole library or run ChatGPT.
+
+Your existing mount must expose:
+
+```text
+/home/ubuntu/rclone/papers/criteria_sources/
+  source_pdf/
+  audit_packages/
+  audit_results/
+```
+
+Add to `.env` (adjust the actual mounted path if different):
+
+```dotenv
+CRITERIA_DRIVE_ROOT=/home/ubuntu/rclone/papers/criteria_sources
+DRIVE_SYNC_INTERVAL=60
+DRIVE_AUTO_PREPARE=true
+```
+
+Ensure rclone is mounted first; Docker deliberately refuses to create missing host
+directories. The container user must be able to read all three directories and write
+`audit_packages`. Only that directory is writable inside the container. FUSE access
+and UID/GID permissions must match the existing rclone configuration; no permissions
+on the entire medical library need to be changed. If rclone is remounted, recreate
+the worker so its bind mounts refer to the current mount.
+
+```bash
+cd /home/ubuntu/criteria
+git pull --ff-only
+docker compose --profile drive pull
+docker compose up -d postgres
+docker compose run --rm migrate
+docker compose --profile drive up -d --no-build api dashboard drive-sync
+docker compose --profile drive logs --tail=100 drive-sync
+```
+
+Subsequent updates start from `docker compose --profile drive pull` unless the
+Compose file has changed. Add `COMPOSE_PROFILES=drive` to `.env` if you prefer normal
+`docker compose pull` and `docker compose up -d` to include this worker automatically.
+
+With auto-prepare enabled, new `ai_extracted` revisions receive one audit package.
+The worker also exports manually prepared packages for other origins. Use the
+dashboard export button to request a new audit package for re-auditing the same
+revision; packages and imported results are immutable.
+
+Exports go to `audit_packages/CARD_ID/revision_N/PACKAGE_ID/audit_package.json`.
+`READY.json` records the package hash and completion of the **local mount write**,
+not confirmation that Google Drive has received the upload. Check that the JSON
+and required PDFs are visible in Drive before asking ChatGPT to audit.
+
+Register retained PDFs with `archive_reference=source_pdf/path/to/document.pdf`
+(relative to criteria_sources). Absolute references under CRITERIA_DRIVE_ROOT are
+also accepted. New versions must use new paths. Source PDF files are never modified
+by the worker. Before importing GPT_VERIFIED, the worker checks the PDF header and
+actual file SHA256 against the registered source; this is not a clinical validation
+or a complete PDF parser.
+
+Save ChatGPT's complete response as `audit_results/PACKAGE_ID.json`, matching the
+package result_schema. The worker reads only JSON files directly in this directory.
+You can upload the file yourself; plugin write capability is not assumed. Grant
+write access to this folder only to trusted reviewers: model labels and conclusions
+inside JSON are submitted audit records, not cryptographic proof of model execution.
+
+Partial JSON, stale/mismatched identities, wrong filenames, unknown packages and
+results above 512 KB are rejected. Files stay untouched for correction; the next
+cycle retries. Identical imported results are idempotent. Conflicting results for
+an already-imported package require a new package. An old revision audit never
+changes the new revision's badges. The worker retains results in PostgreSQL.
+
+Rclone directory caching and upload write-back can add delay beyond the worker's
+60-second polling interval. See [rclone VFS documentation](https://rclone.org/commands/rclone_mount/).
+Do not interpret a local write as completed remote synchronization.
+
+Disable the worker without affecting the database: `docker compose --profile drive stop drive-sync`.

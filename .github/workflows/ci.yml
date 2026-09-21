@@ -25,6 +25,12 @@ jobs:
           curl --fail http://127.0.0.1:3500/health/live
           curl --fail http://127.0.0.1:3500/public/cards
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:3500/dashboard)" = "303"
+      - name: Smoke test Drive worker with isolated directories
+        run: |
+          export CRITERIA_DRIVE_ROOT="$RUNNER_TEMP/criteria-drive"
+          mkdir -p "$CRITERIA_DRIVE_ROOT"/{source_pdf,audit_packages,audit_results}
+          chmod 777 "$CRITERIA_DRIVE_ROOT/audit_packages"
+          docker compose --profile drive run --rm drive-sync python -m app.drive_sync --once
       - name: Cleanup ephemeral CI resources
         if: always()
         run: docker compose --profile test down --volumes

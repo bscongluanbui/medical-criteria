@@ -4131,3 +4131,14 @@ Nếu làm được điều đó, Telegram Bot chỉ còn là lớp giao diện 
 - Bản có mâu thuẫn bị ẩn khỏi câu trả lời công khai; sửa thành revision mới trước khi công bố lại. Bản Gemini mới không tự thay bản bác sĩ đã duyệt.
 - Web tiếp tục chọn tối đa sáu card công khai. API trả trạng thái kiểm định cùng nội dung; Telegram phải hiển thị các trạng thái khi được tích hợp.
 - Release hiện tại: dashboard/backend công bố sơ bộ, snapshot audit, import kết quả, image GHCR và Compose pull. Telegram → Gemini, tải/kiểm chứng PDF và upload Drive chưa được tích hợp trong release này.
+
+### 64.1. Bổ sung triển khai: trao đổi audit qua Drive mount
+
+- Dùng thư mục `criteria_sources/source_pdf`, `criteria_sources/audit_packages`, `criteria_sources/audit_results` trên mount rclone hiện có; không tạo mount mới.
+- Service Docker `drive-sync` (profile `drive`) tự tạo gói cho revision `ai_extracted` chưa có package; xuất cả package được tạo thủ công từ dashboard.
+- Người quản lý audit định kỳ bằng ChatGPT Web rồi lưu JSON theo tên `PACKAGE_ID.json` trực tiếp trong `audit_results`. Plugin không có quyền ghi thì người quản lý tải JSON lên thư mục này.
+- Worker đọc kết quả mỗi 60 giây; độ trễ thực tế còn phụ thuộc cache/upload của rclone. `READY.json` chỉ xác nhận hoàn tất ghi trên mount cục bộ, không xác nhận Google Drive đã nhận file.
+- Worker chỉ có quyền ghi `audit_packages`; hai thư mục còn lại được mount chỉ đọc. Không xóa hoặc di chuyển file của người dùng.
+- Khi tự import kết luận GPT_VERIFIED, worker yêu cầu PDF gốc có header PDF và SHA256 khớp nguồn đã đăng ký. Kiểm tra file không đồng nghĩa xác nhận nội dung y khoa.
+- Kết quả JSON chưa hoàn tất, sai tên, sai hash/revision hoặc thiếu claim được giữ nguyên và thử lại ở chu kỳ sau; kết quả giống nhau không tạo audit trùng.
+- PostgreSQL giữ toàn bộ package và kết quả bất biến. Phần Telegram → Gemini và tải PDF từ internet vẫn là bước tích hợp tiếp theo.

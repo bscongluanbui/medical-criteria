@@ -119,8 +119,9 @@ class KnowledgeService(VerificationWorkflow):
 
     def pending(self):
         with self.sessions() as db:
-            withdrawn = select(Audit.id).where(Audit.card_id == Revision.card_id, Audit.revision == Revision.number, Audit.action == "withdrawn").exists()
-            return [{"card_id": r.card_id, "revision": r.number, "card": r.payload} for r in db.scalars(select(Revision).join(CardHead, CardHead.id == Revision.card_id).where(Revision.number == CardHead.latest, (CardHead.published.is_(None)) | (CardHead.latest != CardHead.published), ~withdrawn)).all()]
+            withdrawn = select(Audit.id).where(Audit.card_id == Revision.card_id, Audit.revision == Revision.number, Audit.action.in_(["withdrawn", "audit_blocked"])).exists()
+            doctor_reviewed = select(Audit.id).where(Audit.card_id == Revision.card_id, Audit.revision == Revision.number, Audit.action == "published").exists()
+            return [{"card_id": r.card_id, "revision": r.number, "card": r.payload, "verification": self.verification(db, r.card_id, r.number)} for r in db.scalars(select(Revision).join(CardHead, CardHead.id == Revision.card_id).where(Revision.number == CardHead.latest, ~doctor_reviewed, ~withdrawn)).all()]
 
     def history(self, card_id):
         with self.sessions() as db:
