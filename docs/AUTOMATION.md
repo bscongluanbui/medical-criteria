@@ -19,7 +19,7 @@ CRITERIA_DRIVE_ROOT=/home/ubuntu/rclone/papers/criteria_sources
 
 `AI_BASE_URL` có thể là gateway Gemini của bạn (ví dụ `https://gateway.example/v1`).
 Không thêm `/chat/completions`: worker tự thêm đường dẫn này. Endpoint phải hỗ trợ
-HTTPS, Bearer API key, Chat Completions, messages system/user, `max_tokens`, và
+HTTP hoặc HTTPS, Bearer API key, Chat Completions, messages system/user, `max_tokens`, và
 trả `choices[0].message.content` chứa JSON. Nếu gateway không hỗ trợ
 `response_format: {type: json_object}`, đặt `AI_JSON_MODE=false`; prompt vẫn yêu cầu
 JSON và backend vẫn xác thực. Không gửi khóa API hoặc token Telegram vào chat.
@@ -137,3 +137,13 @@ API/dashboard/Drive audit tiếp tục hoạt động. Muốn rollback image, d�
 tag `sha-...` đã ghi trước khi cập nhật rồi recreate các service. Migration chỉ thêm
 research_jobs, telegram_updates, telegram_state; không xóa dữ liệu cũ. Không dùng
 `docker compose down -v`.
+
+### Gateway HTTP
+
+`AI_BASE_URL=http://HOST:PORT/v1` được hỗ trợ trực tiếp, không cần cờ bổ sung.
+HTTP không mã hóa API key và nội dung truyền; ưu tiên mạng nội bộ/VPN hoặc HTTPS khi đi qua Internet.
+Không thêm `/chat/completions` vào base URL. Sau khi đổi `.env`, recreate service bot.
+
+Tên model ghi nhận lấy từ `AI_MODEL` trong `.env` tại lần chạy tạo dữ liệu.
+`configured_model` lưu tên cấu hình; `reported_model` lưu tên gateway trả về riêng.
+Đổi `.env` không đổi tên model của revision đã tạo, kể cả khi worker tiếp tục sau gián đoạn.

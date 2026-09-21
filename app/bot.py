@@ -221,7 +221,7 @@ def main():
     if not root.is_dir() or not os.access(root, os.W_OK):
         raise ValueError('SOURCE_PDF_ROOT must be mounted writable')
     if args.check_config:
-        print('BOT_CONFIG_OK: public access; OpenAI-compatible HTTPS; writable PDF mount; no network calls')
+        print('BOT_CONFIG_OK: public access; OpenAI-compatible HTTP/HTTPS; writable PDF mount; no network calls')
         return
     if args.check_ai:
         result = ai.ask('Connection test. Return {"ok":true}.', {'test': 'connectivity only; no medical content'})

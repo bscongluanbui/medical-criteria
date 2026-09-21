@@ -98,15 +98,16 @@ def test_ack_and_failed_delivery_backoff(queue):
         assert row.send_attempts == 1 and row.next_send_at > time.time()
 
 
-def test_ai_wire_contract():
+@pytest.mark.parametrize('scheme', ['http', 'https'])
+def test_ai_wire_contract(scheme):
     def handle(request):
-        assert str(request.url) == 'https://gateway.example/v1/chat/completions'
+        assert str(request.url) == f'{scheme}://gateway.example/v1/chat/completions'
         assert request.headers['authorization'] == 'Bearer test-key'
         payload = json.loads(request.content)
         assert payload['model'] == 'user-gemini-model'
         assert payload['response_format'] == {'type': 'json_object'}
         return httpx.Response(200, json={'model': 'reported-model', 'choices': [{'finish_reason': 'stop', 'message': {'content': '{"ok":true}'}}]})
-    ai = CompatibleAI('https://gateway.example/v1/', 'test-key', 'user-gemini-model', transport=httpx.MockTransport(handle))
+    ai = CompatibleAI(f'{scheme}://gateway.example/v1/', 'test-key', 'user-gemini-model', transport=httpx.MockTransport(handle))
     assert ai.ask('Return JSON', {}) == {'ok': True}
     assert ai.calls[0]['reported_model'] == 'reported-model'
 
@@ -123,8 +124,8 @@ def test_ai_errors_do_not_leak_secret(mode):
     assert 'private-key' not in str(error.value)
 
 
-@pytest.mark.parametrize('url', ['http://example.org/v1', 'https://user:password@example.org/v1', 'https://example.org/v1?key=secret'])
-def test_ai_requires_clean_https_base(url):
+@pytest.mark.parametrize('url', ['ftp://example.org/v1', 'http:///v1', 'http://user:password@example.org/v1', 'http://example.org/v1#fragment', 'https://user:password@example.org/v1', 'https://example.org/v1?key=secret'])
+def test_ai_requires_clean_http_or_https_base(url):
     with pytest.raises(ValueError):
         CompatibleAI(url, 'key', 'model')
 
@@ -249,3 +250,33 @@ def test_search_uses_actual_ids_and_excludes_retractions(monkeypatch):
             {'pmcid': '../../bad', 'title': 'invalid'}]}}).encode()
     monkeypatch.setattr('app.literature.fetch', fake)
     assert [r['pmcid'] for r in Literature().search('criteria')] == ['PMC1']
+
+
+def test_ai_model_from_environment(monkeypatch):
+    monkeypatch.setenv('AI_BASE_URL', 'http://gateway.example:8080/v1')
+    monkeypatch.setenv('AI_API_KEY', 'synthetic-key')
+    monkeypatch.setenv('AI_MODEL', 'custom-model-from-env')
+    assert CompatibleAI.from_env().model == 'custom-model-from-env'
+
+
+def test_resume_keeps_original_model(queue, tmp_path, monkeypatch):
+    queue.receive(update(1))
+    pipeline = pipeline_fixture(queue, tmp_path, monkeypatch)
+    original_publish = pipeline.service.publish_preliminary
+    def fail_publish(*args):
+        raise RuntimeError('simulated crash before publication')
+    monkeypatch.setattr(pipeline.service, 'publish_preliminary', fail_publish)
+    with queue.sessions() as db:
+        job = db.scalar(select(ResearchJob))
+    with pytest.raises(RuntimeError):
+        pipeline.run(job)
+    with queue.sessions() as db:
+        assert db.get(ResearchJob, job.id).provenance['configured_model'] == 'gemini-test'
+    captured = []
+    def capture(*args):
+        captured.append(args[-1])
+        return original_publish(*args)
+    pipeline.ai.model = 'different-model-after-restart'
+    monkeypatch.setattr(pipeline.service, 'publish_preliminary', capture)
+    pipeline.run(job)
+    assert captured == ['gemini-test']

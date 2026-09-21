@@ -31,6 +31,10 @@ class ResearchPipeline:
             if head:
                 return self.resume(card_id)
         self.ai.calls = []
+        with self.sessions.begin() as db:
+            record = db.get(ResearchJob, job.id)
+            if record:
+                record.provenance = {'configured_model': self.ai.model}
         plan = self.ai.ask('Classify a general radiology knowledge topic, NOT a patient case. Return {"eligible":boolean,"search_terms":string}. Use concise English scientific keywords for diagnostic criteria, imaging measurement, classification or guidelines. If it contains identifiable patient information, is a patient case, or is unrelated, eligible=false.', {'topic': job.query})
         if plan.get('eligible') is not True:
             raise NeedsReview('GENERAL_KNOWLEDGE_TOPIC_REQUIRED')
@@ -114,7 +118,7 @@ class ResearchPipeline:
             record = db.get(ResearchJob, job.id)
             if record:
                 record.card_id = card_id
-                record.provenance = {'search_provider': 'EuropePMC/PMC-OA', 'search_terms': terms,
+                record.provenance = {'configured_model': self.ai.model, 'search_provider': 'EuropePMC/PMC-OA', 'search_terms': terms,
                                      'sources': [s.id for s in sources], 'calls': self.ai.calls}
         return self.resume(card_id)
 
@@ -126,11 +130,12 @@ class ResearchPipeline:
             blocked = db.scalar(select(Audit.id).where(Audit.card_id == card_id, Audit.revision == head.latest, Audit.action.in_(['withdrawn', 'audit_blocked'])))
             if blocked:
                 raise NeedsReview('GENERATED_REVISION_BLOCKED')
-            reviewed = db.scalar(select(Audit.id).where(Audit.card_id == card_id, Audit.revision == head.latest, Audit.action == 'ai_self_checked'))
+            reviewed = db.scalar(select(Audit).where(Audit.card_id == card_id, Audit.revision == head.latest, Audit.action == 'ai_self_checked'))
             if not reviewed:
                 raise NeedsReview('REVISION_REQUIRES_REVIEW')
+            original_model = json.loads(reviewed.reason)['model']
             number, published = head.latest, head.published
         if published is None:
-            self.service.publish_preliminary(card_id, number, 'ai-worker', 'Source-first extraction; model self-check only, not independent audit', self.ai.model)
+            self.service.publish_preliminary(card_id, number, 'ai-worker', 'Source-first extraction; model self-check only, not independent audit', original_model)
         self.service.prepare_audit(card_id, number, 'ai-worker', reuse=True)
         return card_id

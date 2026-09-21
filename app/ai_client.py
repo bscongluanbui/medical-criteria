@@ -12,8 +12,8 @@ class AIError(RuntimeError):
 class CompatibleAI:
     def __init__(self, base_url, api_key, model, *, json_mode=True, max_tokens=12000, transport=None):
         parsed = urlparse(base_url)
-        if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError('AI_BASE_URL must be an HTTPS API base without credentials/query')
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError('AI_BASE_URL must be an HTTP or HTTPS API base without credentials/query/fragment')
         if not api_key or not model:
             raise ValueError('AI_API_KEY and AI_MODEL are required')
         self.base_url, self.api_key, self.model = base_url.rstrip('/'), api_key, model
