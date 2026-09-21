@@ -35,6 +35,14 @@ jobs:
           mkdir -p "$CRITERIA_DRIVE_ROOT"/{source_pdf,audit_packages,audit_results}
           chmod 777 "$CRITERIA_DRIVE_ROOT/audit_packages"
           docker compose --profile drive run --rm drive-sync python -m app.drive_sync --once
+      - name: Validate bot container configuration without external API calls
+        run: |
+          export CRITERIA_DRIVE_ROOT="$RUNNER_TEMP/criteria-drive"
+          export TELEGRAM_BOT_TOKEN="123456:synthetic-ci-not-a-real-token"
+          export AI_API_KEY="synthetic-ci-not-a-real-key"
+          export AI_MODEL="synthetic-ci-model"
+          chmod 777 "$CRITERIA_DRIVE_ROOT/source_pdf"
+          docker compose --profile bot run --rm bot python -m app.bot --check-config
       - name: Cleanup ephemeral CI resources
         if: always()
         run: docker compose --profile test down --volumes

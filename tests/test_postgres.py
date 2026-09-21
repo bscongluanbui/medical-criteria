@@ -42,6 +42,29 @@ def test_postgres_migration_is_repeatable_and_publication_persists(pg):
     assert KnowledgeService(sessions).get_published("test")["revision"] == 1
 
 
+def test_postgres_public_bot_pipeline_and_notifications(pg, tmp_path, monkeypatch):
+    from app.bot import BotQueue
+    from app.database import ResearchJob, AuditPackage, BotUpdate
+    from tests.test_automation import pipeline_fixture, update
+    engine, sessions, service = pg
+    queue = BotQueue(sessions, cooldown=0)
+    queue.receive(update(500, chat=987654321))
+    pipeline = pipeline_fixture(queue, tmp_path, monkeypatch)
+    assert queue.process(pipeline)
+    with sessions() as db:
+        job = db.scalar(select(ResearchJob))
+        assert job.status == 'completed', job.error_code
+        assert db.scalar(select(AuditPackage)) is not None
+    sent = []
+    class Telegram:
+        def send(self, chat, message):
+            sent.append(message)
+    queue.deliver(Telegram())
+    assert len(sent) == 1 and 'GPT_UNVERIFIED' in sent[0]
+    with sessions() as db:
+        assert db.get(BotUpdate, 500).delivered
+
+
 @pytest.mark.parametrize("table", ["document_versions", "card_revisions", "audit_events"])
 @pytest.mark.parametrize("verb", ["UPDATE", "DELETE"])
 def test_postgres_raw_sql_cannot_mutate_immutable_rows(pg, table, verb):

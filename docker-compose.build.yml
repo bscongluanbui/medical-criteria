@@ -1,5 +1,9 @@
 # Optional local development build; VPS uses the default pull-only compose.
 services:
+  bot:
+    build:
+      context: .
+      target: runtime
   drive-sync:
     build:
       context: .

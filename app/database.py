@@ -96,6 +96,37 @@ class AuditResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class ResearchJob(Base):
+    __tablename__ = "research_jobs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    query: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(30), default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[int] = mapped_column(Integer, default=0)
+    card_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[int] = mapped_column(Integer)
+
+
+class BotUpdate(Base):
+    __tablename__ = "telegram_updates"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    chat_id: Mapped[str] = mapped_column(String(40))
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("research_jobs.id"), nullable=True)
+    reply: Mapped[str | None] = mapped_column(Text, nullable=True)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+    delivered: Mapped[bool] = mapped_column(Boolean, default=False)
+    send_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_send_at: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class BotState(Base):
+    __tablename__ = "telegram_state"
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    offset: Mapped[int] = mapped_column(Integer, default=0)
+
+
 def immutable(mapper, connection, target):
     raise ValueError("immutable record: create a new revision/event instead")
 

@@ -1,5 +1,10 @@
 # Update VPS from GHCR
 
+Telegram/AI automation is now available as an optional `bot` profile. See
+[AUTOMATION.md](AUTOMATION.md) for OpenAI-compatible credentials, public Telegram
+access, automatic research and current source coverage. This supersedes the older
+"does not call Gemini/run Telegram" status below.
+
 Runtime image: `ghcr.io/bscongluanbui/medical-criteria:latest` (Linux amd64 and arm64/v8).
 Docker automatically selects the architecture of the VPS from the same image tag.
 CI tests run on both native amd64 and ARM64 runners before multi-platform publication.

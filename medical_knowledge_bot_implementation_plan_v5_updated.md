@@ -4142,3 +4142,14 @@ Nếu làm được điều đó, Telegram Bot chỉ còn là lớp giao diện 
 - Khi tự import kết luận GPT_VERIFIED, worker yêu cầu PDF gốc có header PDF và SHA256 khớp nguồn đã đăng ký. Kiểm tra file không đồng nghĩa xác nhận nội dung y khoa.
 - Kết quả JSON chưa hoàn tất, sai tên, sai hash/revision hoặc thiếu claim được giữ nguyên và thử lại ở chu kỳ sau; kết quả giống nhau không tạo audit trùng.
 - PostgreSQL giữ toàn bộ package và kết quả bất biến. Phần Telegram → Gemini và tải PDF từ internet vẫn là bước tích hợp tiếp theo.
+
+### 64.2. Triển khai Telegram công khai và AI-compatible
+
+- Profile Docker `bot` cho phép tất cả Telegram ID tra cứu; không dùng allowlist. Cấu hình `TELEGRAM_BOT_TOKEN`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` trong `.env`, không commit secrets.
+- AI dùng HTTPS OpenAI Chat Completions (`/chat/completions`), tương thích Gemini hoặc gateway do người quản lý chọn. Không mặc định gateway hỗ trợ Google Search grounding.
+- Khi thiếu dữ liệu, PostgreSQL lưu hàng đợi theo chủ đề chuẩn hóa; bot xác nhận đã nhận và gửi kết quả khi xong. Câu hỏi đã có dữ liệu không gọi AI. Có hạn mức tạo chủ đề mới để kiểm soát chi phí, không giới hạn quyền tra cứu theo ID.
+- Tìm nguồn bằng Europe PMC, tải PDF từ PMC Cloud hiện hành; xác nhận license phù hợp, trạng thái thu hồi, checksum; parse PDF trong subprocess; lưu theo SHA256 tại `source_pdf`.
+- AI trích xuất theo schema, backend kiểm tra evidence/hash/trang/trích dẫn; AI tự kiểm tra ở lời gọi riêng. Bản đạt được công bố sơ bộ và tạo audit package tự động. ChatGPT/doctor vẫn là hai lớp audit độc lập chưa được thực hiện tự động.
+- Không công bố khi thiếu nguồn, trích dẫn không khớp, không đọc được PDF hoặc kiểm tra thất bại. Dashboard có hàng đợi xem trạng thái/mã lỗi.
+- Phạm vi bản đầu: nguồn PMC mở có PDF đọc được; chưa tìm toàn bộ web, chưa OCR/vision, chưa tự cập nhật guideline định kỳ. Giữ sáu vị trí web công khai do admin chọn; Telegram đọc mọi revision đã công bố.
+- Hướng dẫn cấu hình, vận hành và rollback nằm trong `docs/AUTOMATION.md`.

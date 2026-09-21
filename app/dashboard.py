@@ -15,6 +15,7 @@ from app.database import Audit, CardHead, Document, PublicSlot, Revision, connec
 from app.schemas import Identifier, RevisionRequest, ReviewRequest, SourceVersion, StrictModel, WithdrawRequest
 from app.service import Conflict, KnowledgeService, NotFound
 from app.schemas import PreliminaryRequest, AuditImport
+from app.database import ResearchJob
 
 
 class Credentials(StrictModel):
@@ -180,6 +181,15 @@ def create_dashboard(database_url=None, origin=None, secure_cookies=True):
     def sources(account=Depends(user)):
         with sessions() as db:
             return {"results": [d.payload for d in db.scalars(select(Document).order_by(Document.id).limit(500)).all()]}
+
+    @app.get("/web/research-jobs")
+    def research_jobs(account=Depends(user)):
+        with sessions() as db:
+            return {"results": [{"id": j.id, "query": j.query, "status": j.status,
+                                 "attempts": j.attempts, "card_id": j.card_id,
+                                 "error_code": j.error_code, "created_at": j.created_at,
+                                 "provenance": j.provenance}
+                                for j in db.scalars(select(ResearchJob).order_by(ResearchJob.created_at.desc()).limit(100))]}
 
     @app.post("/web/sources", status_code=201)
     def register(body: SourceVersion, account=Depends(admin)):

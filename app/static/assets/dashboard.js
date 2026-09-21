@@ -15,7 +15,7 @@ async function action(button,fn,target='#message'){button.disabled=true;try{awai
 function setView(view){document.querySelectorAll('[id^="view-"]').forEach(el=>el.classList.toggle('hidden',el.id!==`view-${view}`));document.querySelectorAll('.side-link').forEach(el=>el.classList.toggle('active',el.dataset.view===view));}
 document.querySelectorAll('[data-view]').forEach(el=>el.addEventListener('click',()=>setView(el.dataset.view)));
 document.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',()=>document.getElementById(el.dataset.close).close()));
-async function refresh(){[cards,sources,slots]=await Promise.all(['/web/cards','/web/sources','/web/featured'].map(async p=>(await api(p)).results));render();}
+async function refresh(){[cards,sources,slots]=await Promise.all(['/web/cards','/web/sources','/web/featured'].map(async p=>(await api(p)).results));render();await renderResearchJobs();}
 function render(){
   $('#stats').innerHTML=[['Tổng tiêu chuẩn',cards.length],['Chờ kiểm duyệt',cards.filter(c=>c.status==='pending').length],['Có bản xuất bản',cards.filter(c=>c.published).length]].map(([label,n])=>`<div class="stat"><small>${label}</small><strong>${n.toString().padStart(2,'0')}</strong></div>`).join('');
   renderRows();renderSources();renderFeatured();
@@ -92,3 +92,9 @@ $('#import-audit').addEventListener('click',e=>action(e.currentTarget,async()=>{
  const result=JSON.parse($('#audit-result').value);if(result.card_id!==selected.id)throw new Error('Kết quả thuộc card khác.');
  const saved=await api('/web/audit-results',result);await refresh();await openCard(cards.find(c=>c.id===selected.id));notice(saved.historical?'Đã lưu audit vào phiên bản cũ, không đổi trạng thái phiên bản mới.':'Đã ghi nhận kết quả ChatGPT audit.');
 },'#editor-error'));
+
+async function renderResearchJobs(){
+ const jobs=(await api('/web/research-jobs')).results;
+ const names={queued:'Chờ xử lý',running:'Đang tìm và kiểm tra',retry:'Chờ thử lại',completed:'Đã tạo tiêu chuẩn',needs_review:'Cần xem xét nguồn',failed:'Xử lý thất bại'};
+ $('#research-jobs').innerHTML=jobs.length?jobs.map(j=>`<article class="source-card"><strong>${esc(j.query)}</strong><p>${esc(names[j.status]||j.status)} · ${j.attempts} lần xử lý</p><small>${esc(j.card_id||j.id.slice(0,12))} · ${esc(j.error_code||'')}</small></article>`).join(''):'<p>Chưa có yêu cầu Telegram.</p>';
+}

@@ -45,7 +45,7 @@ def test_public_home_login_and_private_page(client):
     assert client.get("/assets/dashboard.html").status_code == 404
 
 
-@pytest.mark.parametrize("endpoint", ["/web/cards", "/web/sources", "/web/featured", "/web/session", "/web/cards/test/history"])
+@pytest.mark.parametrize("endpoint", ["/web/cards", "/web/sources", "/web/featured", "/web/session", "/web/cards/test/history", "/web/research-jobs"])
 def test_private_reads_require_login(client, endpoint):
     assert client.get(endpoint).status_code == 401
 
