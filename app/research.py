@@ -19,6 +19,28 @@ def normalized_quote(value):
     return ' '.join(value.split())
 
 
+def extraction_schema(sources):
+    schema = Card.model_json_schema()
+    evidence = schema['$defs']['Evidence']['properties']
+    evidence['document_version_id']['enum'] = [source.id for source in sources]
+    evidence['document_sha256']['enum'] = list(dict.fromkeys(source.sha256 for source in sources))
+    return schema
+
+
+def bind_evidence_source(evidence, sources):
+    # Only accept a registered internal ID or an exact external PMCID with its exact hash.
+    # Never choose a source by similarity, order, or because only one source exists.
+    internal = [s for s in sources if s.id == evidence.document_version_id]
+    if internal:
+        return internal[0]
+    candidates = [s for s in sources if s.source_id == evidence.document_version_id
+                  and s.sha256 == evidence.document_sha256]
+    if len(candidates) == 1:
+        evidence.document_version_id = candidates[0].id
+        return candidates[0]
+    return None
+
+
 class ResearchPipeline:
     def __init__(self, sessions, ai, source_root, literature=None):
         self.sessions, self.ai, self.source_root = sessions, ai, source_root
@@ -42,7 +64,8 @@ class ResearchPipeline:
         with self.sessions.begin() as db:
             record = db.get(ResearchJob, job.id)
             if record:
-                record.provenance = {**(record.provenance or {}), 'configured_model': self.ai.model}
+                record.provenance = {**(record.provenance or {}), 'configured_model': self.ai.model,
+                                     'schema_errors': [], 'source_failures': [], 'evidence_errors': [], 'retained_sources': []}
         self.progress(job, 'search_plan')
         plan = self.ai.ask('Classify a general radiology knowledge topic, NOT a patient case. Return {"eligible":boolean,"search_terms":string}. Use concise English scientific keywords for diagnostic criteria, imaging measurement, classification or guidelines. If it contains identifiable patient information, is a patient case, or is unrelated, eligible=false.', {'topic': job.query})
         if plan.get('eligible') is not True:
@@ -85,9 +108,11 @@ class ResearchPipeline:
             documents.append({'source': source.model_dump(), 'pages': [{'pdf_page': i+1, 'text': text} for i, text in enumerate(pages)]})
         if not sources:
             raise NeedsReview('NO_READABLE_RETAINED_PDF')
-        self.progress(job, 'card_extraction')
-        raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. origin=ai_extracted. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
-                           {'topic': job.query, 'requested_route': (job.provenance or {}).get('route'), 'card_schema': Card.model_json_schema(), 'cross_field_rules': SCHEMA_RULES, 'documents': documents})
+        source_bindings = [{'document_version_id':s.id, 'source_id':s.source_id, 'document_sha256':s.sha256, 'pdf_pages':s.pdf_pages} for s in sources]
+        schema = extraction_schema(sources)
+        self.progress(job, 'card_extraction', retained_sources=source_bindings)
+        raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. Copy document_version_id and document_sha256 exactly from the same entry in source_bindings; source_id/PMCID is NOT document_version_id. origin=ai_extracted. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
+                           {'topic': job.query, 'requested_route': (job.provenance or {}).get('route'), 'card_schema': schema, 'source_bindings': source_bindings, 'cross_field_rules': SCHEMA_RULES, 'documents': documents})
         if not raw.get('card'):
             raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
         try:
@@ -99,7 +124,7 @@ class ResearchPipeline:
             # Exactly one repair using the same retained sources; never silently relax schema.
             repaired = self.ai.ask('Repair the JSON card to match the schema. Return {"card":object} or {"card":null} if source evidence is insufficient. Correct structure only using supplied source pages. Do not invent evidence, change thresholds from memory, or remove applicability/limitations to make validation pass. Preserve the requested topic/type/modality. Null is preferable to unsupported content.',
                 {'draft':raw['card'], 'validation_errors':details['schema_errors'],
-                 'card_schema':Card.model_json_schema(), 'cross_field_rules': SCHEMA_RULES, 'requested_route':(job.provenance or {}).get('route'), 'documents':documents})
+                 'card_schema':schema, 'source_bindings':source_bindings, 'cross_field_rules': SCHEMA_RULES, 'requested_route':(job.provenance or {}).get('route'), 'documents':documents})
             if not repaired.get('card'):
                 raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
             try:
@@ -107,6 +132,7 @@ class ResearchPipeline:
             except ValidationError as final_error:
                 self.progress(job, 'card_schema_failed', schema_errors=error_details(final_error)['schema_errors'])
                 raise NeedsReview('CARD_SCHEMA_INVALID_AFTER_REPAIR') from None
+        self.progress(job, 'card_schema_valid', schema_errors=[])
         if card.origin != 'ai_extracted':
             raise NeedsReview('INVALID_ORIGIN')
         route = (job.provenance or {}).get('route')
@@ -124,8 +150,10 @@ class ResearchPipeline:
         if not route and job.query not in card.aliases:
             card.aliases = card.aliases[:29]+[job.query]
         available = {s.id: (s, d['pages']) for s, d in zip(sources, documents)}
+        self.progress(job, 'evidence_binding')
         for evidence in card.evidence:
-            if evidence.document_version_id not in available:
+            if bind_evidence_source(evidence, sources) is None:
+                self.progress(job, 'evidence_binding_failed', evidence_errors=[{'evidence_id': evidence.id, 'document_version_id': evidence.document_version_id, 'code': 'UNRETAINED_EVIDENCE'}])
                 raise NeedsReview('UNRETAINED_EVIDENCE')
             source, pages = available[evidence.document_version_id]
             if evidence.document_sha256 != source.sha256 or evidence.pdf_page > len(pages):

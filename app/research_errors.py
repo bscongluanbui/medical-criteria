@@ -49,5 +49,5 @@ def record_failure(record,exc):
     record.error_code=details['code']
     provenance=record.provenance or {}
     history=list(provenance.get('failure_history',[]))[-9:]
-    history.append({'at':int(time.time()),'attempt':record.attempts,'stage':provenance.get('stage','routing'),**details})
+    history.append({'at':int(time.time()),'attempt':record.attempts,'stage':provenance.get('stage','routing'), 'schema_errors':provenance.get('schema_errors',[]), 'source_failures':provenance.get('source_failures',[]), 'evidence_errors':provenance.get('evidence_errors',[]), **details})
     record.provenance={**provenance,'failure_history':history}
