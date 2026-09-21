@@ -112,3 +112,17 @@ def test_postgres_concurrent_publish_has_one_winner(pg):
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(lambda _: publish(), range(2))) == ["conflict", "published"]
     assert [e["action"] for e in service.history("test")] == ["draft_created", "published"]
+
+def test_postgres_canonical_routing_and_dedup(pg):
+    from app.query_router import QueryRouter
+    from app.bot import BotQueue
+    from app.database import ResearchJob
+    engine,sessions,_=pg
+    router=QueryRouter(sessions);router.bootstrap();router.bootstrap()
+    queue=BotQueue(sessions,router=router,cooldown=0)
+    for i,q in enumerate(['tiêu chuẩn siêu âm hẹp van 2 lá','tieu chuan ultrasound mitral stenosis'],1):
+        queue.receive({'update_id':i,'message':{'chat':{'id':i},'text':q}})
+    with sessions() as db:
+        jobs=list(db.scalars(select(ResearchJob)))
+        assert len(jobs)==1
+        assert jobs[0].provenance['route']['modality']=='ultrasound'

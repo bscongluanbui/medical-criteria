@@ -12,6 +12,8 @@ from app.ai_client import CompatibleAI, AIError
 from app.database import BotState, BotUpdate, ResearchJob, connect
 from app.research import NeedsReview, ResearchPipeline
 from app.service import KnowledgeService, NotFound, normalize
+from app.query_router import QueryRouter, Route, route_key, normalize_query
+from app.database import QueryEvent, BotMenu, Revision, CardHead
 
 LOG = logging.getLogger('criteria.bot')
 HELP = ('Gửi tên tiêu chuẩn hoặc cách đo CT/MRI/siêu âm để tra cứu. '
@@ -38,11 +40,11 @@ class Telegram:
         except (httpx.HTTPError, ValueError):
             raise RuntimeError('TELEGRAM_TRANSPORT_ERROR') from None
 
-    def send(self, chat_id, message):
+    def send(self, chat_id, message, buttons=None):
         # Telegram measures UTF-16; 1800 Unicode codepoints fit even with emoji.
         for start in range(0, len(message), 1800):
             self.call('sendMessage', {'chat_id': chat_id, 'text': message[start:start+1800],
-                                      'link_preview_options': {'is_disabled': True}})
+                                      'link_preview_options': {'is_disabled': True}, **({'reply_markup': {'inline_keyboard': buttons}} if buttons and start == 0 else {})})
 
 
 def answer(service, card_id):
@@ -76,8 +78,9 @@ def answer(service, card_id):
 
 
 class BotQueue:
-    def __init__(self, sessions, *, daily_limit=20, cooldown=60, attempts=2):
+    def __init__(self, sessions, *, daily_limit=20, cooldown=60, attempts=2, router=None):
         self.sessions = sessions
+        self.router = router
         self.service = KnowledgeService(sessions)
         self.daily_limit, self.cooldown, self.max_attempts = daily_limit, cooldown, attempts
 
@@ -88,7 +91,10 @@ class BotQueue:
 
     def receive(self, update):
         now = int(time.time())
+        callback = update.get('callback_query')
         message = update.get('message', {})
+        if callback:
+            message = {**callback.get('message', {}), 'text': callback.get('data',''), 'from': callback.get('from',{})}
         chat_id = str(message.get('chat', {}).get('id', ''))
         query = message.get('text', '').strip()
         with self.sessions.begin() as db:
@@ -103,6 +109,16 @@ class BotQueue:
                 return
             row = BotUpdate(id=update['update_id'], chat_id=chat_id)
             db.add(row)
+            if query.startswith('rev:'):
+                try: rid = int(query[4:])
+                except ValueError: row.reply = 'Lựa chọn không hợp lệ.'; return
+                revision = db.get(Revision, rid)
+                head = db.get(CardHead, revision.card_id) if revision else None
+                if not head or head.published != revision.number:
+                    row.reply = 'Nội dung đã thay đổi hoặc được thu hồi. Hãy tra cứu lại.'
+                else:
+                    row.reply = answer(self.service, revision.card_id)
+                return
             if query.split()[0].split('@')[0] in ('/start', '/help'):
                 row.reply = HELP
                 return
@@ -112,17 +128,40 @@ class BotQueue:
                 return
             if query.startswith('/ask '):
                 query = query[5:].strip()
-            if not 3 <= len(query) <= 500:
+            if not 2 <= len(query) <= 500:
                 row.reply = 'Gửi tên chủ đề kiến thức từ 3–500 ký tự. '+HELP
                 return
-            hits = self.service.search(query)
+            route = self.router.local(query) if self.router else None
+            if route:
+                db.add(QueryEvent(normalized_query=normalize_query(query), route=route.model_dump()))
+                if route.reason in ('ambiguous_abbreviation', 'multiple_modalities', 'intent_not_in_mvp'):
+                    row.reply = 'Cần làm rõ tên bệnh và phương thức (siêu âm/CT/MRI). MVP chỉ hỗ trợ chẩn đoán và dấu hiệu gợi ý; chưa phân độ, điều trị hoặc tính điểm.'
+                    return
+                if route.topic_id:
+                    routed_hits = self.router.cards(route)
+                    if routed_hits:
+                        if route.intent != 'overview' and len(routed_hits)==1:
+                            row.reply = answer(self.service, routed_hits[0]['card_id'])
+                        else:
+                            row.reply = self.router.title(route.topic_id)+'\nCác nội dung đang có:\n'+'\n'.join(h['card_id']+' — '+h['card']['type']+' / '+h['card']['modality'] for h in routed_hits[:10])
+                        db.flush()
+                        labels={'diagnostic_criteria':'Tiêu chuẩn chẩn đoán','imaging_diagnostic_criteria':'Tiêu chuẩn hình ảnh','diagnostic_features':'Gợi ý chẩn đoán','overview':'Tổng quan'}
+                        db.add(BotMenu(update_id=row.id,buttons=[[{'text':labels.get(h['card']['type'],h['card']['type'])+' / '+h['card']['modality'],'callback_data':'rev:'+str(h['revision_id'])}] for h in routed_hits[:10]]))
+                        return
+                    available=self.router.cards(route.model_copy(update={'intent':'overview','modality':None}))
+                    if available:
+                        db.flush()
+                        db.add(BotMenu(update_id=row.id,buttons=[[{'text':h['card']['type']+' / '+h['card']['modality'],'callback_data':'rev:'+str(h['revision_id'])}] for h in available[:10]]))
+                    if route.intent == 'overview':
+                        route = route.model_copy(update={'intent':'diagnostic_criteria'})
+            hits = self.service.search(query) if not route or not route.topic_id else []
             if len(hits) == 1:
                 row.reply = answer(self.service, hits[0]['card_id'])
                 return
             if hits:
                 row.reply = 'Có nhiều kết quả. Gửi mã tiêu chuẩn cần xem:\n'+'\n'.join(h['card_id']+' — '+h['name_vi'] for h in hits[:10])
                 return
-            key = hashlib.sha256(normalize(query).encode()).hexdigest()
+            key = route_key(route) if route and route.topic_id else hashlib.sha256(normalize_query(query).encode()).hexdigest()
             job = db.get(ResearchJob, key)
             if job is None:
                 total = db.scalar(select(func.count()).select_from(ResearchJob).where(ResearchJob.created_at >= now-86400))
@@ -130,7 +169,7 @@ class BotQueue:
                 if total >= self.daily_limit or recent:
                     row.reply = 'Đã đạt giới hạn tạo dữ liệu mới tạm thời. Bạn vẫn tra cứu được các tiêu chuẩn đã có; hãy thử chủ đề mới sau.'
                     return
-                job = ResearchJob(id=key, query=query, created_at=now)
+                job = ResearchJob(id=key, query=query, created_at=now, provenance={'route':route.model_dump()} if route and route.topic_id else {})
                 db.add(job)
                 db.flush()
             row.job_id = job.id
@@ -193,7 +232,12 @@ class BotQueue:
                     done = False
                     reply = 'Đã nhận yêu cầu. Bot đang tìm nguồn và kiểm tra bằng chứng; kết quả AI sơ bộ sẽ được gửi sau.\nMã: '+job.id[:12]
             try:
-                telegram.send(row.chat_id, reply)
+                with self.sessions() as db:
+                    menu = db.get(BotMenu, row.id)
+                if menu:
+                    telegram.send(row.chat_id, reply, buttons=menu.buttons)
+                else:
+                    telegram.send(row.chat_id, reply)
             except RuntimeError:
                 # One blocked chat must not stop the entire public queue.
                 with self.sessions.begin() as db:
@@ -241,7 +285,13 @@ def main():
         raise RuntimeError('Telegram webhook is active; remove it before enabling long polling')
     queue = BotQueue(sessions, daily_limit=int(os.getenv('AI_DAILY_JOB_LIMIT', '20')),
                      cooldown=int(os.getenv('AI_CHAT_COOLDOWN_SECONDS', '60')))
-    pipeline = ResearchPipeline(sessions, ai, root)
+    router = QueryRouter(sessions)
+    router.bootstrap()
+    queue.router = router
+    from app.routed_research import RoutedResearch
+    router_ai = CompatibleAI.from_env()
+    router_ai.model = os.getenv('AI_ROUTER_MODEL') or ai.model
+    pipeline = RoutedResearch(sessions, ai, root, router, router_ai)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = None
         try:
@@ -252,9 +302,11 @@ def main():
                         if finished:
                             finished.result()
                         future = executor.submit(queue.process, pipeline)
-                    updates = telegram.call('getUpdates', {'offset': queue.offset(), 'timeout': 10, 'limit': 30, 'allowed_updates': ['message']})
+                    updates = telegram.call('getUpdates', {'offset': queue.offset(), 'timeout': 10, 'limit': 30, 'allowed_updates': ['message', 'callback_query']})
                     for update in updates:
                         queue.receive(update)
+                        if update.get('callback_query'):
+                            telegram.call('answerCallbackQuery', {'callback_query_id': update['callback_query']['id']})
                     queue.deliver(telegram)
                     Path('/tmp/bot-heartbeat').write_text(str(time.time()))
                 except Exception as exc:

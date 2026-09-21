@@ -25,6 +25,8 @@ if __name__ == "__main__":
     engine, _ = connect(os.environ["DATABASE_URL"])
     try:
         migrate(engine)
+        from app.query_router import QueryRouter
+        QueryRouter(_).bootstrap()
         print("MIGRATION_001_OK")
     finally:
         engine.dispose()

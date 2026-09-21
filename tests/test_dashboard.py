@@ -152,3 +152,13 @@ def test_security_headers(client):
     assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
     assert response.headers["x-content-type-options"] == "nosniff"
     assert "unsafe-inline" not in response.headers["content-security-policy"]
+
+
+@pytest.mark.parametrize('path', ['/web/query-route?q=test','/web/alias-candidates','/web/query-analytics'])
+def test_query_tools_require_login(client,path):
+    assert client.get(path).status_code==401
+
+
+def test_alias_approval_requires_admin_and_csrf(client):
+    headers=login(client,'reviewer')
+    assert client.post('/web/alias-candidates/1/approve',json={},headers=headers).status_code==403

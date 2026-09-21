@@ -127,6 +127,63 @@ class BotState(Base):
     offset: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class Topic(Base):
+    __tablename__ = "topics"
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    canonical_name_vi: Mapped[str] = mapped_column(String(500))
+    canonical_name_en: Mapped[str] = mapped_column(String(500))
+    description: Mapped[str] = mapped_column(Text, default="")
+    specialty: Mapped[str] = mapped_column(String(100), default="radiology")
+
+
+class TopicCardBinding(Base):
+    __tablename__ = "topic_card_bindings"
+    card_id: Mapped[str] = mapped_column(ForeignKey("card_heads.id"), primary_key=True)
+    topic_id: Mapped[str] = mapped_column(ForeignKey("topics.id"))
+
+
+class TopicAlias(Base):
+    __tablename__ = "topic_aliases"
+    __table_args__ = (UniqueConstraint("topic_id", "normalized_alias"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    topic_id: Mapped[str] = mapped_column(ForeignKey("topics.id"))
+    alias: Mapped[str] = mapped_column(String(500))
+    normalized_alias: Mapped[str] = mapped_column(String(500), index=True)
+    language: Mapped[str] = mapped_column(String(10), default="und")
+    alias_type: Mapped[str] = mapped_column(String(30), default="common_name")
+    is_ambiguous: Mapped[bool] = mapped_column(Boolean, default=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AliasCandidate(Base):
+    __tablename__ = "alias_candidates"
+    __table_args__ = (UniqueConstraint("normalized_alias", "suggested_topic_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    alias: Mapped[str] = mapped_column(String(500))
+    normalized_alias: Mapped[str] = mapped_column(String(500))
+    suggested_topic_id: Mapped[str] = mapped_column(ForeignKey("topics.id"))
+    hit_count: Mapped[int] = mapped_column(Integer, default=1)
+    router_model: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(30), default="candidate")
+    reviewed_by: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BotMenu(Base):
+    __tablename__ = "telegram_menus"
+    update_id: Mapped[int] = mapped_column(ForeignKey("telegram_updates.id"), primary_key=True)
+    buttons: Mapped[list] = mapped_column(JSON)
+
+
+class QueryEvent(Base):
+    __tablename__ = "query_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    normalized_query: Mapped[str] = mapped_column(String(500))
+    route: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 def immutable(mapper, connection, target):
     raise ValueError("immutable record: create a new revision/event instead")
 

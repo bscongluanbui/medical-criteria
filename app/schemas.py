@@ -97,7 +97,8 @@ class Card(StrictModel):
     name_vi: Text
     name_en: Text
     aliases: list[Text] = Field(default_factory=list, max_length=30)
-    type: Literal["diagnostic_criteria", "severity_grading", "classification", "clinical_score", "imaging_guideline", "measurement", "management_algorithm", "follow_up", "red_flags", "differential_diagnosis", "reporting_system"]
+    type: Literal["overview", "imaging_diagnostic_criteria", "diagnostic_features", "diagnostic_criteria", "severity_grading", "classification", "clinical_score", "imaging_guideline", "measurement", "management_algorithm", "follow_up", "red_flags", "differential_diagnosis", "reporting_system"]
+    strength: Literal["supportive"] | None = None
     guideline_family: Text
     guideline_module: Text
     guideline_version: Text
@@ -111,6 +112,10 @@ class Card(StrictModel):
 
     @model_validator(mode="after")
     def check_references(self) -> Self:
+        if self.type == "imaging_diagnostic_criteria" and self.modality not in ("ultrasound", "ct", "mri", "xray", "nuclear_medicine", "other"):
+            raise ValueError("imaging diagnostic criteria require a normalized modality")
+        if self.type == "diagnostic_features" and (self.strength != "supportive" or self.logic.kind != "reference_only"):
+            raise ValueError("diagnostic features must be supportive and reference_only, not a formal diagnostic rule")
         claim_ids = {c.id for c in self.claims}
         evidence_ids = {e.id for e in self.evidence}
         if len(claim_ids) != len(self.claims) or len(evidence_ids) != len(self.evidence):

@@ -144,6 +144,7 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai}
       AI_API_KEY: ${AI_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-}
+      AI_ROUTER_MODEL: ${AI_ROUTER_MODEL:-}
       AI_JSON_MODE: ${AI_JSON_MODE:-true}
       AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-12000}
       AI_DAILY_JOB_LIMIT: ${AI_DAILY_JOB_LIMIT:-20}

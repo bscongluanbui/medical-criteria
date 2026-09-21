@@ -3,7 +3,7 @@ import hashlib
 import json
 import re
 from sqlalchemy import select
-from app.database import Audit, CardHead, Document, ResearchJob, Revision
+from app.database import Topic, Audit, CardHead, Document, ResearchJob, Revision
 from app.literature import Literature, SourceError, parse_pdf, retain_pdf
 from app.schemas import Card, SourceVersion
 from app.service import KnowledgeService
@@ -34,7 +34,7 @@ class ResearchPipeline:
         with self.sessions.begin() as db:
             record = db.get(ResearchJob, job.id)
             if record:
-                record.provenance = {'configured_model': self.ai.model}
+                record.provenance = {**(record.provenance or {}), 'configured_model': self.ai.model}
         plan = self.ai.ask('Classify a general radiology knowledge topic, NOT a patient case. Return {"eligible":boolean,"search_terms":string}. Use concise English scientific keywords for diagnostic criteria, imaging measurement, classification or guidelines. If it contains identifiable patient information, is a patient case, or is unrelated, eligible=false.', {'topic': job.query})
         if plan.get('eligible') is not True:
             raise NeedsReview('GENERAL_KNOWLEDGE_TOPIC_REQUIRED')
@@ -71,15 +71,25 @@ class ResearchPipeline:
         if not sources:
             raise NeedsReview('NO_READABLE_RETAINED_PDF')
         raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. origin=ai_extracted. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
-                           {'topic': job.query, 'card_schema': Card.model_json_schema(), 'documents': documents})
+                           {'topic': job.query, 'requested_route': (job.provenance or {}).get('route'), 'card_schema': Card.model_json_schema(), 'documents': documents})
         if not raw.get('card'):
             raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
         card = Card.model_validate(raw['card'])
         if card.origin != 'ai_extracted':
             raise NeedsReview('INVALID_ORIGIN')
-        card.topic_id = card_id
+        route = (job.provenance or {}).get('route')
+        if route:
+            if card.type != route['intent'] or (route.get('modality') and card.modality != route['modality']):
+                raise NeedsReview('EXTRACTED_CARD_ROUTE_MISMATCH')
+            card.topic_id = route['topic_id']
+            with self.sessions() as db:
+                topic = db.get(Topic, card.topic_id)
+                if topic:
+                    card.name_vi, card.name_en = topic.canonical_name_vi, topic.canonical_name_en
+        else:
+            card.topic_id = card_id
         # Keep exact request as an alias for deterministic cache hits.
-        if job.query not in card.aliases:
+        if not route and job.query not in card.aliases:
             card.aliases = card.aliases[:29]+[job.query]
         available = {s.id: (s, d['pages']) for s, d in zip(sources, documents)}
         for evidence in card.evidence:
@@ -118,7 +128,7 @@ class ResearchPipeline:
             record = db.get(ResearchJob, job.id)
             if record:
                 record.card_id = card_id
-                record.provenance = {'configured_model': self.ai.model, 'search_provider': 'EuropePMC/PMC-OA', 'search_terms': terms,
+                record.provenance = {**(record.provenance or {}), 'configured_model': self.ai.model, 'search_provider': 'EuropePMC/PMC-OA', 'search_terms': terms,
                                      'sources': [s.id for s in sources], 'calls': self.ai.calls}
         return self.resume(card_id)
 

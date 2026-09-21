@@ -98,3 +98,16 @@ async function renderResearchJobs(){
  const names={queued:'Chờ xử lý',running:'Đang tìm và kiểm tra',retry:'Chờ thử lại',completed:'Đã tạo tiêu chuẩn',needs_review:'Cần xem xét nguồn',failed:'Xử lý thất bại'};
  $('#research-jobs').innerHTML=jobs.length?jobs.map(j=>`<article class="source-card"><strong>${esc(j.query)}</strong><p>${esc(names[j.status]||j.status)} · ${j.attempts} lần xử lý</p><small>${esc(j.card_id||j.id.slice(0,12))} · ${esc(j.error_code||'')}</small></article>`).join(''):'<p>Chưa có yêu cầu Telegram.</p>';
 }
+
+$('#canonical-search').addEventListener('click',e=>action(e.currentTarget,async()=>{
+ const result=await api('/web/query-route?q='+encodeURIComponent($('#canonical-query').value));
+ $('#canonical-results').textContent=(result.title||'Cần làm rõ tên bệnh')+' · '+result.route.intent+' · '+(result.route.modality||'');
+ for(const h of result.results){const b=document.createElement('button');b.className='button outline';b.textContent=h.card.type+' / '+h.card.modality;b.addEventListener('click',()=>openCard(cards.find(c=>c.id===h.card_id)));$('#canonical-results').append(b);}
+}));
+$('#alias-refresh').addEventListener('click',e=>action(e.currentTarget,async()=>{
+ const results=(await api('/web/alias-candidates')).results;
+ $('#alias-candidates').innerHTML=results.map(c=>`<p>${esc(c.alias)} → ${esc(c.topic_id)} · ${c.hits} lượt · ${esc(c.model)} · ${esc(c.status)} ${account.role==='admin'&&c.status==='candidate'?`<button class="button outline" data-approve-alias="${c.id}">Duyệt alias</button>`:''}</p>`).join('')||'Chưa có alias đề xuất';
+ document.querySelectorAll('[data-approve-alias]').forEach(b=>b.addEventListener('click',()=>action(b,async()=>{if(!confirm('Xác nhận alias này chỉ một chủ đề, không đa nghĩa?'))return;await api('/web/alias-candidates/'+b.dataset.approveAlias+'/approve',{});b.textContent='Đã duyệt';})));
+ const stats=(await api('/web/query-analytics')).results;
+ $('#query-analytics').innerHTML=stats.map(x=>`<p>${esc(x.query)}: ${x.count}</p>`).join('')||'Chưa có truy vấn';
+}));

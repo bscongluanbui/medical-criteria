@@ -1,3 +1,5 @@
+New: [Query normalization core v2](docs/QUERY_NORMALIZATION_V2.md).
+
 # Release: revision-bound AI publication and ChatGPT audit
 
 New: [public Telegram + OpenAI-compatible AI automation](docs/AUTOMATION.md).

@@ -15,7 +15,8 @@ from app.database import Audit, CardHead, Document, PublicSlot, Revision, connec
 from app.schemas import Identifier, RevisionRequest, ReviewRequest, SourceVersion, StrictModel, WithdrawRequest
 from app.service import Conflict, KnowledgeService, NotFound
 from app.schemas import PreliminaryRequest, AuditImport
-from app.database import ResearchJob
+from app.database import ResearchJob, AliasCandidate, QueryEvent
+from app.query_router import QueryRouter
 
 
 class Credentials(StrictModel):
@@ -181,6 +182,30 @@ def create_dashboard(database_url=None, origin=None, secure_cookies=True):
     def sources(account=Depends(user)):
         with sessions() as db:
             return {"results": [d.payload for d in db.scalars(select(Document).order_by(Document.id).limit(500)).all()]}
+
+    @app.get("/web/query-route")
+    def query_route(q: str, account=Depends(user)):
+        if not 2 <= len(q) <= 500: raise ValueError("Query must contain 2-500 characters")
+        router = QueryRouter(sessions)
+        route = router.local(q)
+        return {"route": route.model_dump(), "title": router.title(route.topic_id) if route.topic_id else None, "results": router.cards(route) if route.topic_id else []}
+
+    @app.get("/web/alias-candidates")
+    def alias_candidates(account=Depends(user)):
+        with sessions() as db:
+            return {"results": [{"id":c.id,"alias":c.alias,"topic_id":c.suggested_topic_id,"hits":c.hit_count,"model":c.router_model,"status":c.status} for c in db.scalars(select(AliasCandidate).order_by(AliasCandidate.id.desc()).limit(100))]}
+
+    @app.post("/web/alias-candidates/{candidate_id}/approve")
+    def approve_alias(candidate_id: int, account=Depends(admin)):
+        QueryRouter(sessions).approve(candidate_id, account["email"])
+        return {"ok": True}
+
+    @app.get("/web/query-analytics")
+    def query_analytics(account=Depends(user)):
+        from sqlalchemy import func
+        with sessions() as db:
+            counts=db.execute(select(QueryEvent.normalized_query,func.count()).group_by(QueryEvent.normalized_query).order_by(func.count().desc()).limit(50)).all()
+            return {"results":[{"query":q,"count":n} for q,n in counts]}
 
     @app.get("/web/research-jobs")
     def research_jobs(account=Depends(user)):
