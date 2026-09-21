@@ -5,10 +5,34 @@ from pydantic import ValidationError
 import httpx
 
 
+# Only fixed application messages can reach diagnostics/repair; never model input.
+SCHEMA_RULES = {
+    "bbox must be normalized, ordered page coordinates": "EVIDENCE_BBOX_INVALID",
+    "duplicate logic claim": "LOGIC_DUPLICATE_CLAIM",
+    "at_least requires a valid minimum": "LOGIC_MINIMUM_INVALID",
+    "minimum is only valid for at_least": "LOGIC_MINIMUM_NOT_APPLICABLE",
+    "imaging diagnostic criteria require a normalized modality": "IMAGING_MODALITY_INVALID",
+    "diagnostic features must be supportive and reference_only, not a formal diagnostic rule": "FEATURES_MUST_BE_SUPPORTIVE",
+    "duplicate claim/evidence id": "DUPLICATE_CLAIM_OR_EVIDENCE_ID",
+    "claim refers to missing evidence": "CLAIM_EVIDENCE_REFERENCE_MISSING",
+    "logic must reference every claim exactly once": "LOGIC_CLAIM_SET_MISMATCH",
+    "measurement card requires measurement protocol": "MEASUREMENT_PROTOCOL_REQUIRED",
+    "measurement modality does not match card": "MEASUREMENT_MODALITY_MISMATCH",
+}
+
+
+def schema_detail(error):
+    detail = {'field': '.'.join(str(x) for x in error['loc'])[:180], 'type': error['type']}
+    message = error.get('msg', '').removeprefix('Value error, ')
+    if message in SCHEMA_RULES:
+        detail.update(rule=SCHEMA_RULES[message], message=message)
+    return detail
+
+
 def error_details(exc):
     if isinstance(exc, ValidationError):
         return {'code':'SCHEMA_VALIDATION_ERROR','schema_errors':[
-            {'field':'.'.join(str(x) for x in e['loc'])[:180], 'type':e['type']}
+            schema_detail(e)
             for e in exc.errors(include_url=False,include_context=False,include_input=False)[:15]]}
     if isinstance(exc,httpx.TimeoutException):return {'code':'SOURCE_TIMEOUT'}
     if isinstance(exc,httpx.HTTPError):return {'code':'SOURCE_TRANSPORT_ERROR'}

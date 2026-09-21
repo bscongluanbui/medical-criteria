@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 from pydantic import ValidationError
+from app.research_errors import SCHEMA_RULES
 from sqlalchemy import select
 from app.database import Topic, Audit, CardHead, Document, ResearchJob, Revision
 from app.literature import Literature, SourceError, parse_pdf, retain_pdf
@@ -86,7 +87,7 @@ class ResearchPipeline:
             raise NeedsReview('NO_READABLE_RETAINED_PDF')
         self.progress(job, 'card_extraction')
         raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. origin=ai_extracted. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
-                           {'topic': job.query, 'requested_route': (job.provenance or {}).get('route'), 'card_schema': Card.model_json_schema(), 'documents': documents})
+                           {'topic': job.query, 'requested_route': (job.provenance or {}).get('route'), 'card_schema': Card.model_json_schema(), 'cross_field_rules': SCHEMA_RULES, 'documents': documents})
         if not raw.get('card'):
             raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
         try:
@@ -98,7 +99,7 @@ class ResearchPipeline:
             # Exactly one repair using the same retained sources; never silently relax schema.
             repaired = self.ai.ask('Repair the JSON card to match the schema. Return {"card":object} or {"card":null} if source evidence is insufficient. Correct structure only using supplied source pages. Do not invent evidence, change thresholds from memory, or remove applicability/limitations to make validation pass. Preserve the requested topic/type/modality. Null is preferable to unsupported content.',
                 {'draft':raw['card'], 'validation_errors':details['schema_errors'],
-                 'card_schema':Card.model_json_schema(), 'requested_route':(job.provenance or {}).get('route'), 'documents':documents})
+                 'card_schema':Card.model_json_schema(), 'cross_field_rules': SCHEMA_RULES, 'requested_route':(job.provenance or {}).get('route'), 'documents':documents})
             if not repaired.get('card'):
                 raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
             try:

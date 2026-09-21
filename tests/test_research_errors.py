@@ -82,3 +82,42 @@ def test_operator_retry_preserves_history(queue):
     assert result['status']=='queued' and result['failure_history']
     with queue.sessions() as db: assert not db.get(BotUpdate,1).delivered
     with pytest.raises(ValueError):operate(queue.sessions,key[:12],True)
+
+
+@pytest.mark.parametrize('mutation,expected', [
+    ('logic','LOGIC_CLAIM_SET_MISMATCH'),
+    ('evidence','CLAIM_EVIDENCE_REFERENCE_MISSING'),
+    ('modality','MEASUREMENT_MODALITY_MISMATCH'),
+])
+def test_cross_field_rules_are_actionable(mutation,expected):
+    from tests.fixtures import card
+    draft=card()
+    if mutation=='logic':draft['logic']['claim_ids']=['nonexistent']
+    elif mutation=='evidence':draft['claims'][0]['evidence_ids']=['nonexistent']
+    else:draft['measurement']['modality']='different'
+    with pytest.raises(ValidationError) as caught:Card.model_validate(draft)
+    detail=error_details(caught.value)['schema_errors'][0]
+    assert detail['field']==''
+    assert detail['rule']==expected
+    assert detail['message']
+
+
+def test_cross_field_repair_receives_exact_rule(queue,tmp_path,monkeypatch):
+    import copy
+    queue.receive(update(1))
+    pipeline=pipeline_fixture(queue,tmp_path,monkeypatch)
+    original=pipeline.ai.ask;saved={};repairs=[]
+    def ask(task,data):
+        if task.startswith('Repair'):
+            repairs.append(data)
+            assert data['validation_errors'][0]['rule']=='LOGIC_CLAIM_SET_MISMATCH'
+            return {'card':saved['card']}
+        result=original(task,data)
+        if result.get('card'):
+            saved['card']=copy.deepcopy(result['card'])
+            result['card']['logic']['claim_ids']=['wrong-id']
+        return result
+    pipeline.ai.ask=ask
+    queue.process(pipeline)
+    with queue.sessions() as db:assert db.scalar(select(ResearchJob)).status=='completed'
+    assert len(repairs)==1
