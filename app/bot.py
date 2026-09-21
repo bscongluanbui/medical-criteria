@@ -56,6 +56,8 @@ def answer(service, card_id):
              'Phiên bản nguồn: '+c['guideline_version'],
              'Đối tượng: '+c['applicability']['population'],
              'Bối cảnh: '+c['applicability']['clinical_context']]
+    if c['type'] == 'diagnostic_features':
+        lines.append('DẤU HIỆU GỢI Ý — hỗ trợ chẩn đoán, không phải bộ tiêu chuẩn chẩn đoán chính thức.')
     for claim in c['claims']:
         t = claim.get('threshold')
         lines.append('• '+claim['text_vi']+(f" ({t['parameter']} {t['operator']} {t['value']} {t['unit']})" if t else ''))
@@ -129,13 +131,13 @@ class BotQueue:
             if query.startswith('/ask '):
                 query = query[5:].strip()
             if not 2 <= len(query) <= 500:
-                row.reply = 'Gửi tên chủ đề kiến thức từ 3–500 ký tự. '+HELP
+                row.reply = 'Gửi tên chủ đề kiến thức từ 2–500 ký tự. '+HELP
                 return
             route = self.router.local(query) if self.router else None
             if route:
                 db.add(QueryEvent(normalized_query=normalize_query(query), route=route.model_dump()))
                 if route.reason in ('ambiguous_abbreviation', 'multiple_modalities', 'intent_not_in_mvp'):
-                    row.reply = 'Cần làm rõ tên bệnh và phương thức (siêu âm/CT/MRI). MVP chỉ hỗ trợ chẩn đoán và dấu hiệu gợi ý; chưa phân độ, điều trị hoặc tính điểm.'
+                    row.reply = ('MS có thể chỉ Hẹp van hai lá hoặc Đa xơ cứng. ' if route.reason=='ambiguous_abbreviation' else '') + 'Cần làm rõ tên bệnh và phương thức (siêu âm/CT/MRI). MVP chỉ hỗ trợ chẩn đoán và dấu hiệu gợi ý; chưa phân độ, điều trị hoặc tính điểm.'
                     return
                 if route.topic_id:
                     routed_hits = self.router.cards(route)

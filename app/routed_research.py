@@ -13,7 +13,6 @@ class RoutedResearch:
     def run(self, job):
         route_data=(job.provenance or {}).get('route')
         route=Route.model_validate(route_data) if route_data else self.router.resolve(job.query, self.router_ai)
-        self.router.record(job.query,route)
         if not route.topic_id or route.confidence!='high' or route.intent=='unknown':
             raise NeedsReview('QUERY_NEEDS_CLARIFICATION')
         hits=self.router.cards(route)
