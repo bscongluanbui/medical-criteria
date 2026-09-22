@@ -41,8 +41,12 @@ def locate_quote(evidence, pages):
     return False, detail
 
 
-def extraction_schema(sources):
+def extraction_schema(sources, route=None):
     schema = Card.model_json_schema()
+    if route:
+        schema['properties']['type'] = {'type':'string', 'const':route['intent']}
+        if route.get('modality'):
+            schema['properties']['modality'] = {'type':'string', 'const':route['modality']}
     evidence = schema['$defs']['Evidence']['properties']
     evidence['document_version_id']['enum'] = [source.id for source in sources]
     evidence['document_sha256']['enum'] = list(dict.fromkeys(source.sha256 for source in sources))
@@ -87,7 +91,7 @@ class ResearchPipeline:
             record = db.get(ResearchJob, job.id)
             if record:
                 record.provenance = {**(record.provenance or {}), 'configured_model': self.ai.model,
-                                     'schema_errors': [], 'source_failures': [], 'evidence_errors': [], 'retained_sources': [], 'evidence_corrections': []}
+                                     'schema_errors': [], 'source_failures': [], 'evidence_errors': [], 'retained_sources': [], 'evidence_corrections': [], 'route_errors': []}
         self.progress(job, 'search_plan')
         plan = self.ai.ask('Classify a general radiology knowledge topic, NOT a patient case. Return {"eligible":boolean,"search_terms":string}. Use concise English scientific keywords for diagnostic criteria, imaging measurement, classification or guidelines. If it contains identifiable patient information, is a patient case, or is unrelated, eligible=false.', {'topic': job.query})
         if plan.get('eligible') is not True:
@@ -131,9 +135,9 @@ class ResearchPipeline:
         if not sources:
             raise NeedsReview('NO_READABLE_RETAINED_PDF')
         source_bindings = [{'document_version_id':s.id, 'source_id':s.source_id, 'document_sha256':s.sha256, 'pdf_pages':s.pdf_pages} for s in sources]
-        schema = extraction_schema(sources)
+        schema = extraction_schema(sources, (job.provenance or {}).get('route'))
         self.progress(job, 'card_extraction', retained_sources=source_bindings)
-        raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. Quote a contiguous verbatim span from a single supplied page; never translate, paraphrase, combine fragments or insert ellipses in evidence.quote. pdf_page is the supplied 1-based physical PDF index, not a printed page label. Copy document_version_id and document_sha256 exactly from the same entry in source_bindings; source_id/PMCID is NOT document_version_id. origin=ai_extracted. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
+        raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. Quote a contiguous verbatim span from a single supplied page; never translate, paraphrase, combine fragments or insert ellipses in evidence.quote. pdf_page is the supplied 1-based physical PDF index, not a printed page label. Copy document_version_id and document_sha256 exactly from the same entry in source_bindings; source_id/PMCID is NOT document_version_id. origin=ai_extracted. Match the requested type and modality exactly. If the documents only support another type (such as severity grading or supportive features), return card=null instead of relabeling that content. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
                            {'topic': job.query, 'requested_route': (job.provenance or {}).get('route'), 'card_schema': schema, 'source_bindings': source_bindings, 'cross_field_rules': SCHEMA_RULES, 'documents': documents})
         if not raw.get('card'):
             raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
@@ -159,8 +163,31 @@ class ResearchPipeline:
             raise NeedsReview('INVALID_ORIGIN')
         route = (job.provenance or {}).get('route')
         if route:
-            if card.type != route['intent'] or (route.get('modality') and card.modality != route['modality']):
-                raise NeedsReview('EXTRACTED_CARD_ROUTE_MISMATCH')
+            def mismatch(candidate):
+                return candidate.type != route['intent'] or (route.get('modality') and candidate.modality != route['modality'])
+            if mismatch(card):
+                route_error = {'expected': {'type':route['intent'], 'modality':route.get('modality')},
+                               'actual': {'type':card.type, 'modality':card.modality}}
+                self.progress(job, 'card_route_repair', route_errors=[route_error])
+                repaired = self.ai.ask('Resolve this requested-route mismatch using only supplied documents. Return {"card":object} satisfying the constrained schema or {"card":null} when the requested content is not supported. Do NOT merely relabel severity grading, management, or supportive features as formal diagnostic criteria. Preserve citations and applicability; never invent content. This is the only route repair attempt.',
+                    {'draft':card.model_dump(mode='json'), 'route_error':route_error,
+                     'requested_route':route, 'card_schema':schema, 'source_bindings':source_bindings,
+                     'cross_field_rules':SCHEMA_RULES, 'documents':documents})
+                if not repaired.get('card'):
+                    raise NeedsReview('REQUESTED_ROUTE_NOT_SUPPORTED_BY_SOURCES')
+                try:
+                    card = Card.model_validate(repaired['card'])
+                except ValidationError as exc:
+                    from app.research_errors import error_details
+                    self.progress(job, 'card_route_repair_schema_failed', schema_errors=error_details(exc)['schema_errors'])
+                    raise NeedsReview('CARD_SCHEMA_INVALID_AFTER_ROUTE_REPAIR') from None
+                if mismatch(card):
+                    self.progress(job, 'card_route_failed', route_errors=[{**route_error,'actual':{'type':card.type,'modality':card.modality}}])
+                    raise NeedsReview('EXTRACTED_CARD_ROUTE_MISMATCH')
+                if card.origin != 'ai_extracted':
+                    raise NeedsReview('INVALID_ORIGIN')
+                self.progress(job, 'card_route_valid', route_errors=[])
+
             card.topic_id = route['topic_id']
             with self.sessions() as db:
                 topic = db.get(Topic, card.topic_id)
