@@ -24,7 +24,7 @@ def operate(sessions,prefix,retry=False):
                 update.next_send_at=0
         p=job.provenance or {}
         return {'id':job.id,'status':job.status,'error_code':job.error_code,'stage':p.get('stage'),
-                'retained_sources':p.get('retained_sources',[]),'evidence_errors':p.get('evidence_errors',[]),
+                'retained_sources':p.get('retained_sources',[]),'evidence_errors':p.get('evidence_errors',[]),'evidence_corrections':p.get('evidence_corrections',[]),
                 'schema_errors':p.get('schema_errors',[]),'source_failures':p.get('source_failures',[]),
                 'failure_history':p.get('failure_history',[])}
 

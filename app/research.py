@@ -19,6 +19,28 @@ def normalized_quote(value):
     return ' '.join(value.split())
 
 
+def locate_quote(evidence, pages):
+    quote = normalized_quote(evidence.quote)
+    matches = [i+1 for i, page in enumerate(pages)
+               if len(quote) >= 20 and quote in normalized_quote(page['text'])]
+    detail = {'evidence_id': evidence.id, 'document_version_id': evidence.document_version_id,
+              'cited_pdf_page': evidence.pdf_page, 'matching_pdf_pages': matches,
+              'quote_length': len(quote), 'quote_sha256': hashlib.sha256(quote.encode()).hexdigest()}
+    if evidence.pdf_page in matches:
+        return True, None
+    # Never move table/cell/figure coordinates or footnotes based only on text matching.
+    has_locator = any(v is not None for v in (evidence.bbox, evidence.table, evidence.table_cell, evidence.footnote))
+    if len(matches) == 1 and not has_locator:
+        detail['code'] = 'EXACT_QUOTE_PAGE_RELOCATED'
+        evidence.pdf_page = matches[0]
+        evidence.printed_page = None
+        return True, detail
+    detail['code'] = ('QUOTE_TOO_SHORT' if len(quote) < 20 else
+                      'QUOTE_NOT_IN_PARSED_DOCUMENT' if not matches else
+                      'QUOTE_PAGE_AMBIGUOUS' if len(matches) > 1 else 'STRUCTURED_LOCATOR_REQUIRES_REVIEW')
+    return False, detail
+
+
 def extraction_schema(sources):
     schema = Card.model_json_schema()
     evidence = schema['$defs']['Evidence']['properties']
@@ -65,7 +87,7 @@ class ResearchPipeline:
             record = db.get(ResearchJob, job.id)
             if record:
                 record.provenance = {**(record.provenance or {}), 'configured_model': self.ai.model,
-                                     'schema_errors': [], 'source_failures': [], 'evidence_errors': [], 'retained_sources': []}
+                                     'schema_errors': [], 'source_failures': [], 'evidence_errors': [], 'retained_sources': [], 'evidence_corrections': []}
         self.progress(job, 'search_plan')
         plan = self.ai.ask('Classify a general radiology knowledge topic, NOT a patient case. Return {"eligible":boolean,"search_terms":string}. Use concise English scientific keywords for diagnostic criteria, imaging measurement, classification or guidelines. If it contains identifiable patient information, is a patient case, or is unrelated, eligible=false.', {'topic': job.query})
         if plan.get('eligible') is not True:
@@ -111,7 +133,7 @@ class ResearchPipeline:
         source_bindings = [{'document_version_id':s.id, 'source_id':s.source_id, 'document_sha256':s.sha256, 'pdf_pages':s.pdf_pages} for s in sources]
         schema = extraction_schema(sources)
         self.progress(job, 'card_extraction', retained_sources=source_bindings)
-        raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. Copy document_version_id and document_sha256 exactly from the same entry in source_bindings; source_id/PMCID is NOT document_version_id. origin=ai_extracted. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
+        raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. Quote a contiguous verbatim span from a single supplied page; never translate, paraphrase, combine fragments or insert ellipses in evidence.quote. pdf_page is the supplied 1-based physical PDF index, not a printed page label. Copy document_version_id and document_sha256 exactly from the same entry in source_bindings; source_id/PMCID is NOT document_version_id. origin=ai_extracted. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
                            {'topic': job.query, 'requested_route': (job.provenance or {}).get('route'), 'card_schema': schema, 'source_bindings': source_bindings, 'cross_field_rules': SCHEMA_RULES, 'documents': documents})
         if not raw.get('card'):
             raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
@@ -151,6 +173,7 @@ class ResearchPipeline:
             card.aliases = card.aliases[:29]+[job.query]
         available = {s.id: (s, d['pages']) for s, d in zip(sources, documents)}
         self.progress(job, 'evidence_binding')
+        evidence_errors, evidence_corrections = [], []
         for evidence in card.evidence:
             if bind_evidence_source(evidence, sources) is None:
                 self.progress(job, 'evidence_binding_failed', evidence_errors=[{'evidence_id': evidence.id, 'document_version_id': evidence.document_version_id, 'code': 'UNRETAINED_EVIDENCE'}])
@@ -158,10 +181,15 @@ class ResearchPipeline:
             source, pages = available[evidence.document_version_id]
             if evidence.document_sha256 != source.sha256 or evidence.pdf_page > len(pages):
                 raise NeedsReview('EVIDENCE_HASH_OR_PAGE_MISMATCH')
-            quote = normalized_quote(evidence.quote)
-            if len(quote) < 20 or quote not in normalized_quote(pages[evidence.pdf_page-1]['text']):
-                raise NeedsReview('QUOTE_NOT_ON_CITED_PAGE')
+            valid, detail = locate_quote(evidence, pages)
+            if not valid:
+                evidence_errors.append(detail)
+            elif detail:
+                evidence_corrections.append(detail)
             evidence.parser_version = 'pypdf-6.19.0-layout'
+        self.progress(job, 'evidence_quote_validation', evidence_errors=evidence_errors, evidence_corrections=evidence_corrections)
+        if evidence_errors:
+            raise NeedsReview('QUOTE_NOT_ON_CITED_PAGE')
         self.progress(job, 'evidence_self_check')
         check = self.ai.ask('Independently re-check this draft against supplied source pages. Return {"context_supported":boolean,"claims":[{"id":string,"supported":boolean}],"notes":string}. Check every claim, numeric operator/value/unit, measurement, population, logic, source version, exceptions and suitability for the requested topic. Supported must be false for ambiguous tables, absent footnotes, or unsupported details. Never equate source availability with truth.',
                             {'topic': job.query, 'card': card.model_dump(mode='json'), 'documents': documents})
