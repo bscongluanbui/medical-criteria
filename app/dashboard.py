@@ -163,7 +163,8 @@ def create_dashboard(database_url=None, origin=None, secure_cookies=True):
                 for e in c["evidence"]:
                     source = db.get(Document, e["document_version_id"])
                     if source:
-                        citations.append({"title": source.payload["title"], "url": source.payload["official_url"], "page": e["pdf_page"]})
+                        citations.append({"title": source.payload["title"], "url": source.payload.get("official_url"),
+                                          "page": e["pdf_page"], "format": source.payload.get("source_format", "pdf")})
                 # Explicit whitelist: no raw quotes, local archive paths, drafts or audit identities.
                 results.append({"id": revision.card_id, "revision": revision.number, "name_vi": c["name_vi"], "name_en": c["name_en"], "modality": c["modality"], "version": c["guideline_version"], "claims": [{"text": claim["text_vi"], "threshold": claim.get("threshold")} for claim in c["claims"]], "applicability": c["applicability"], "measurement": c.get("measurement"), "logic": c["logic"], "sources": citations, "verification": service.verification(db, revision.card_id, revision.number)})
             return {"results": results}

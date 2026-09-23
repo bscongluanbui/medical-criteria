@@ -63,9 +63,10 @@ class DriveSync:
         reference = reference.replace('\\', '/')
         if self.host_root and reference.startswith(self.host_root.rstrip('/') + '/'):
             reference = reference[len(self.host_root.rstrip('/')) + 1:]
-        if not reference.startswith('source_pdf/'):
-            raise ValueError("archive_reference must start with source_pdf/")
-        return contained(self.root / 'source_pdf', self.root / reference)
+        prefix = reference.split('/', 1)[0]
+        if prefix not in ('source_pdf', 'source_web', 'parse_pdf') or '/' not in reference:
+            raise ValueError('archive_reference has an unsupported source directory')
+        return contained(self.root / prefix, self.root / reference)
 
     def check_sources(self, package):
         checks = []
@@ -73,11 +74,11 @@ class DriveSync:
             check = {'document_version_id': source['id'], 'sha256': source['sha256']}
             try:
                 path = self.source_file(source['archive_reference'])
-                with path.open('rb') as pdf:
-                    if not pdf.read(5).startswith(b'%PDF-'):
+                with path.open('rb') as source_file:
+                    if source.get('source_format', 'pdf') == 'pdf' and not source_file.read(5).startswith(b'%PDF-'):
                         raise ValueError('not a PDF header')
-                    pdf.seek(0)
-                    actual = hashlib.file_digest(pdf, 'sha256').hexdigest()
+                    source_file.seek(0)
+                    actual = hashlib.file_digest(source_file, 'sha256').hexdigest()
                 check['status'] = 'HASH_MATCH' if actual == source['sha256'] else 'HASH_MISMATCH'
                 check['relative_path'] = path.relative_to(self.root).as_posix()
             except (OSError, ValueError):
@@ -136,7 +137,7 @@ class DriveSync:
                 if not existing and body.overall == 'GPT_VERIFIED':
                     checks = self.check_sources(pkg.payload)
                     if not checks or any(c['status'] != 'HASH_MATCH' for c in checks):
-                        raise ValueError('verified result requires retained source PDFs with matching hashes')
+                        raise ValueError('verified result requires retained source files with matching hashes')
                 saved = self.service.import_audit(body, 'drive-sync')
                 counts['duplicates' if saved['duplicate'] else 'imported'] += 1
             except Exception as exc:

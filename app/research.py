@@ -6,7 +6,8 @@ from pydantic import ValidationError
 from app.research_errors import SCHEMA_RULES
 from sqlalchemy import select
 from app.database import Topic, Audit, CardHead, Document, ResearchJob, Revision
-from app.literature import Literature, SourceError, parse_pdf, retain_pdf
+from app.literature import Literature, SourceError, parse_pdf, retain_pdf, retain_web
+from app.library import Library
 from app.schemas import Card, SourceVersion
 from app.service import KnowledgeService
 
@@ -68,10 +69,61 @@ def bind_evidence_source(evidence, sources):
 
 
 class ResearchPipeline:
-    def __init__(self, sessions, ai, source_root, literature=None):
+    def __init__(self, sessions, ai, source_root, literature=None, library_root=None, source_web_root=None):
         self.sessions, self.ai, self.source_root = sessions, ai, source_root
+        self.source_web_root = source_web_root
+        self.library = Library(sessions, library_root) if library_root else None
         self.literature = literature or Literature()
         self.service = KnowledgeService(sessions)
+
+    def online_sources(self, job, terms, source_failures):
+        """Provider-verified PMC results, then retained PDF or licensed JATS text."""
+        self.progress(job, 'source_search', search_terms=terms, source_failures=source_failures)
+        candidates = self.literature.search(terms)
+        if not candidates:
+            raise NeedsReview('NO_OPEN_ACCESS_SOURCE')
+        self.progress(job, 'source_selection', candidate_ids=[c['pmcid'] for c in candidates])
+        selection = self.ai.ask('Choose up to 3 candidate PMC IDs that directly document the requested criteria. Prefer primary guideline/consensus/validation publications over reviews. Return {"pmcids":[string]}. Empty list if no suitable evidence. Do not invent IDs.', {'topic': job.query, 'candidates': candidates})
+        ids = selection.get('pmcids', [])
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 3 or any(not isinstance(i, str) for i in ids):
+            raise NeedsReview('NO_SUITABLE_SOURCE')
+        by_id = {c['pmcid']: c for c in candidates}
+        if not set(ids) <= by_id.keys():
+            raise NeedsReview('SOURCE_ID_NOT_IN_SEARCH')
+        sources, documents = [], []
+        self.progress(job, 'source_download')
+        for pmcid in dict.fromkeys(ids):
+            candidate = by_id[pmcid]
+            try:
+                data, license_note = self.literature.retrieve(candidate)
+                pages = parse_pdf(data)
+                sha = retain_pdf(self.source_root, data)
+                source_format = 'pdf'
+            except (SourceError, OSError) as exc:
+                from app.research_errors import error_details
+                source_failures.append({'pmcid':pmcid, **error_details(exc)})
+                if not self.source_web_root or not hasattr(self.literature, 'retrieve_web'):
+                    continue
+                try:
+                    pages, license_note = self.literature.retrieve_web(candidate)
+                    sha = retain_web(self.source_web_root, pages)
+                    source_format = 'web_text'
+                except (SourceError, OSError) as web_exc:
+                    source_failures.append({'pmcid':pmcid, 'code':str(web_exc)[:100]})
+                    continue
+            source = SourceVersion(id=('web-' if source_format == 'web_text' else 'pdf-')+sha[:40], source_id=pmcid,
+                title=candidate.get('title') or pmcid,
+                organization=(candidate.get('authors') or '')[:2000] or 'PMC indexed publication',
+                version=str(candidate.get('year') or 'undated'), doi=candidate.get('doi'), source_format=source_format,
+                official_url='https://pmc.ncbi.nlm.nih.gov/articles/'+pmcid+'/', sha256=sha,
+                pdf_pages=len(pages), license_note=license_note,
+                archive_reference=('source_web/'+sha+'.txt' if source_format == 'web_text' else 'source_pdf/'+sha+'.pdf'), retention='retained_source')
+            sources.append(source)
+            documents.append({'source': source.model_dump(), 'pages': [{'pdf_page': i+1, 'text': text} for i, text in enumerate(pages)]})
+        if not sources:
+            self.progress(job, 'source_unavailable', source_failures=source_failures)
+            raise NeedsReview('NO_READABLE_RETAINED_SOURCE')
+        return sources, documents
 
     def progress(self, job, stage, **details):
         with self.sessions.begin() as db:
@@ -99,46 +151,55 @@ class ResearchPipeline:
         terms = plan.get('search_terms')
         if not isinstance(terms, str) or not 1 <= len(terms) <= 250:
             raise NeedsReview('INVALID_SEARCH_PLAN')
-        self.progress(job, 'source_search', search_terms=terms)
-        candidates = self.literature.search(terms)
-        if not candidates:
-            raise NeedsReview('NO_OPEN_ACCESS_SOURCE')
-        self.progress(job, 'source_selection', candidate_ids=[c['pmcid'] for c in candidates])
-        selection = self.ai.ask('Choose up to 3 candidate PMC IDs that directly document the requested criteria. Prefer primary guideline/consensus/validation publications over reviews. Return {"pmcids":[string]}. Empty list if no suitable evidence. Do not invent IDs.', {'topic': job.query, 'candidates': candidates})
-        ids = selection.get('pmcids', [])
-        if not isinstance(ids, list) or not 1 <= len(ids) <= 3 or any(not isinstance(i, str) for i in ids):
-            raise NeedsReview('NO_SUITABLE_SOURCE')
-        by_id = {c['pmcid']: c for c in candidates}
-        if not set(ids) <= by_id.keys():
-            raise NeedsReview('SOURCE_ID_NOT_IN_SEARCH')
         sources, documents, source_failures = [], [], []
-        self.progress(job, 'source_download')
-        for pmcid in dict.fromkeys(ids):
-            candidate = by_id[pmcid]
-            try:
-                data, license_note = self.literature.retrieve(candidate)
-                pages = parse_pdf(data)
-                sha = retain_pdf(self.source_root, data)
-            except (SourceError, OSError) as exc:
-                from app.research_errors import error_details
-                source_failures.append({'pmcid':pmcid, **error_details(exc)})
-                self.progress(job, 'source_download', source_failures=source_failures)
-                continue
-            source = SourceVersion(id='pdf-'+sha[:40], source_id=pmcid,
-                title=candidate['title'], organization=candidate['authors'][:2000] or 'PMC indexed publication',
-                version=candidate['year'] or 'undated', doi=candidate.get('doi'),
-                official_url='https://pmc.ncbi.nlm.nih.gov/articles/'+pmcid+'/', sha256=sha,
-                pdf_pages=len(pages), license_note=license_note,
-                archive_reference='source_pdf/'+sha+'.pdf', retention='retained_source')
-            sources.append(source)
-            documents.append({'source': source.model_dump(), 'pages': [{'pdf_page': i+1, 'text': text} for i, text in enumerate(pages)]})
+        route = (job.provenance or {}).get('route')
+        if self.library:
+            with self.sessions() as db:
+                topic = db.get(Topic, route['topic_id']) if route else None
+            lookup = ' '.join(filter(None, [topic.canonical_name_en if topic else '', terms]))
+            self.progress(job, 'library_search', search_terms=lookup)
+            library_candidates = self.library.search(lookup)
+            if library_candidates:
+                for candidate in library_candidates[:3]:
+                    key = candidate['id']
+                    try:
+                        pages, sha = self.library.retrieve(candidate)
+                        source = SourceVersion(id='parsed-'+sha[:40], source_id='mineru-'+key[:40],
+                            title=candidate['title'], organization='MinerU-parsed library', version='parsed library file',
+                            official_url=None,
+                            sha256=sha, source_format='parsed_text', pdf_pages=len(pages),
+                            library_relative_path=candidate['relative_path'],
+                            license_note='User-provided MinerU parse; verify original PDF during audit',
+                            archive_reference='parse_pdf/'+candidate['relative_path'], retention='retained_source')
+                        sources.append(source)
+                        documents.append({'source': source.model_dump(), 'pages': [{'pdf_page': i+1, 'text': text} for i, text in enumerate(pages)]})
+                    except (SourceError, OSError) as exc:
+                        source_failures.append({'library_id':key, 'code':str(exc)[:100]})
+            if sources:
+                screen = self.ai.ask('Determine whether these MinerU-parsed source segments directly contain usable evidence for the requested criteria. Return {"suitable":boolean}. Do not infer from titles or memory; unsupported or unreadable segments are unsuitable.',
+                    {'topic': job.query, 'documents': documents})
+                if screen.get('suitable') is not True:
+                    sources, documents = [], []
         if not sources:
-            raise NeedsReview('NO_READABLE_RETAINED_PDF')
-        source_bindings = [{'document_version_id':s.id, 'source_id':s.source_id, 'document_sha256':s.sha256, 'pdf_pages':s.pdf_pages} for s in sources]
+            sources, documents = self.online_sources(job, terms, source_failures)
+        source_bindings = [{'document_version_id':s.id, 'source_id':s.source_id, 'document_sha256':s.sha256,
+                            'source_format':s.source_format, 'segment_count':s.pdf_pages} for s in sources]
         schema = extraction_schema(sources, (job.provenance or {}).get('route'))
         self.progress(job, 'card_extraction', retained_sources=source_bindings)
-        raw = self.ai.ask('Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied pages, exact verbatim quotes and actual page numbers. Quote a contiguous verbatim span from a single supplied page; never translate, paraphrase, combine fragments or insert ellipses in evidence.quote. pdf_page is the supplied 1-based physical PDF index, not a printed page label. Copy document_version_id and document_sha256 exactly from the same entry in source_bindings; source_id/PMCID is NOT document_version_id. origin=ai_extracted. Match the requested type and modality exactly. If the documents only support another type (such as severity grading or supportive features), return card=null instead of relabeling that content. Identify the specific source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.',
+        prompt = 'Extract a Vietnamese knowledge card matching the supplied JSON schema. Return {"card":object} or {"card":null} if evidence is insufficient. Use only supplied source segments and exact verbatim quotes. Quote a contiguous verbatim span from a single supplied segment; never translate, paraphrase, combine fragments or insert ellipses in evidence.quote. For PDF, pdf_page is the supplied 1-based physical PDF index; for web_text or parsed_text, the same field is the 1-based text segment number, not a PDF page. Copy document_version_id and document_sha256 exactly from the same entry in source_bindings; source_id/PMCID is NOT document_version_id. origin=ai_extracted. Match the requested type and modality exactly. If documents only support another type, return card=null. Identify source version, population, measurement protocol, thresholds, units, exceptions and limitations. Do not claim latest/current unless documented. Do not fill gaps from memory. A scanned/table/figure-dependent criterion with unreadable layout must return card=null. Include at most 15 claims, all supported by retained source evidence.'
+        raw = self.ai.ask(prompt,
                            {'topic': job.query, 'requested_route': (job.provenance or {}).get('route'), 'card_schema': schema, 'source_bindings': source_bindings, 'cross_field_rules': SCHEMA_RULES, 'documents': documents})
+        if not raw.get('card') and all(source.source_format == 'parsed_text' for source in sources):
+            # A title/content screen can be optimistic; no usable card means try verified web sources.
+            sources, documents = self.online_sources(job, terms, source_failures)
+            source_bindings = [{'document_version_id':s.id, 'source_id':s.source_id,
+                                'document_sha256':s.sha256, 'source_format':s.source_format,
+                                'segment_count':s.pdf_pages} for s in sources]
+            schema = extraction_schema(sources, (job.provenance or {}).get('route'))
+            self.progress(job, 'card_extraction', retained_sources=source_bindings)
+            raw = self.ai.ask(prompt, {'topic':job.query, 'requested_route':(job.provenance or {}).get('route'),
+                                       'card_schema':schema, 'source_bindings':source_bindings,
+                                       'cross_field_rules':SCHEMA_RULES, 'documents':documents})
         if not raw.get('card'):
             raise NeedsReview('INSUFFICIENT_EXTRACTABLE_EVIDENCE')
         try:
@@ -213,7 +274,8 @@ class ResearchPipeline:
                 evidence_errors.append(detail)
             elif detail:
                 evidence_corrections.append(detail)
-            evidence.parser_version = 'pypdf-6.19.0-layout'
+            evidence.parser_version = ('mineru-parsed-segments-v1' if source.source_format == 'parsed_text' else
+                                       'jats-text-segments-v1' if source.source_format == 'web_text' else 'pypdf-6.19.0-layout')
         self.progress(job, 'evidence_quote_validation', evidence_errors=evidence_errors, evidence_corrections=evidence_corrections)
         if evidence_errors:
             raise NeedsReview('QUOTE_NOT_ON_CITED_PAGE')
@@ -245,7 +307,9 @@ class ResearchPipeline:
             record = db.get(ResearchJob, job.id)
             if record:
                 record.card_id = card_id
-                record.provenance = {**(record.provenance or {}), 'configured_model': self.ai.model, 'search_provider': 'EuropePMC/PMC-OA', 'search_terms': terms,
+                record.provenance = {**(record.provenance or {}), 'configured_model': self.ai.model,
+                                     'search_provider': 'library' if any(s.library_relative_path for s in sources) else 'EuropePMC/PMC-OA',
+                                     'search_terms': terms, 'source_failures': source_failures,
                                      'sources': [s.id for s in sources], 'calls': self.ai.calls}
         return self.resume(card_id)
 

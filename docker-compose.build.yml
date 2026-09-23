@@ -4,6 +4,10 @@ services:
     build:
       context: .
       target: runtime
+  library-scan:
+    build:
+      context: .
+      target: runtime
   drive-sync:
     build:
       context: .

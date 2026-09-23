@@ -1,6 +1,6 @@
 """PostgreSQL production models; SQLite is used only in isolated tests."""
 from datetime import datetime, timezone
-from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, event
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -16,6 +16,17 @@ class Document(Base):
     __tablename__ = "document_versions"
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
     payload: Mapped[dict] = mapped_column(JSON)
+
+
+class LibraryFile(Base):
+    """Incremental inventory only; source PDFs are parsed on selection."""
+    __tablename__ = "library_files"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    relative_path: Mapped[str] = mapped_column(Text)
+    search_text: Mapped[str] = mapped_column(Text)
+    size: Mapped[int] = mapped_column(BigInteger)
+    mtime_ns: Mapped[int] = mapped_column(BigInteger)
+    indexed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class CardHead(Base):

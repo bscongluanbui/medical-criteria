@@ -138,8 +138,10 @@ class SourceVersion(StrictModel):
     organization: Text
     version: Text
     doi: str | None = None
-    official_url: str = Field(pattern=r"^https://[^\s]+$", max_length=2000)
+    official_url: str | None = Field(default=None, pattern=r"^https://[^\s]+$", max_length=2000)
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    source_format: Literal['pdf', 'web_text', 'parsed_text'] = 'pdf'
+    library_relative_path: str | None = None
     pdf_pages: int = Field(ge=1)
     license_note: Text
     archive_reference: Text

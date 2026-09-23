@@ -17,7 +17,7 @@ from app.database import QueryEvent, BotMenu, Revision, CardHead
 
 LOG = logging.getLogger('criteria.bot')
 HELP = ('Gửi tên tiêu chuẩn hoặc cách đo CT/MRI/siêu âm để tra cứu. '
-        'Nếu chưa có dữ liệu, bot sẽ tìm tài liệu mở và tạo bản AI sơ bộ. '
+        'Nếu chưa có dữ liệu, bot đọc thư viện MinerU trước, rồi tìm nguồn mở và tạo bản AI sơ bộ. '
         'Chỉ gửi chủ đề kiến thức chung, không gửi thông tin nhận dạng bệnh nhân. '
         'Dùng /status để xem yêu cầu gần nhất. Không thay thế đánh giá lâm sàng.')
 
@@ -52,7 +52,7 @@ def answer(service, card_id):
     c, v = published['card'], published['verification']
     status = ('BÁC SĨ ĐÃ DUYỆT' if v['doctor'] == 'DOCTOR_VERIFIED' else 'AI SƠ BỘ — chưa được bác sĩ duyệt')
     lines = [c['name_vi'], f"Revision {published['revision']} · {status}",
-             f"AI/Gemini: {v['gemini']} · ChatGPT: {v['chatgpt']} · Doctor: {v['doctor']}",
+             f"AI/Gemini ({v['gemini_model'] or 'chưa ghi model'}): {v['gemini']} · ChatGPT: {v['chatgpt']} · Doctor: {v['doctor']}",
              'Phiên bản nguồn: '+c['guideline_version'],
              'Đối tượng: '+c['applicability']['population'],
              'Bối cảnh: '+c['applicability']['clinical_context']]
@@ -72,7 +72,10 @@ def answer(service, card_id):
     with service.sessions() as db:
         for e in c['evidence']:
             source = db.get(Document, e['document_version_id'])
-            lines.append(f"Nguồn: {source.payload['title']} — trang PDF {e['pdf_page']}\n{source.payload['official_url']}")
+            kind = source.payload.get('source_format', 'pdf')
+            locator = 'trang PDF' if kind == 'pdf' else 'đoạn văn bản'
+            reference = source.payload.get('official_url') or source.payload['archive_reference']
+            lines.append(f"Nguồn: {source.payload['title']} — {locator} {e['pdf_page']}\n{reference}")
     message = '\n'.join(lines)
     if len(message) > 14000:
         return '\n'.join(lines[:6])+f'\nNội dung dài; xem đầy đủ qua hệ thống. Mã: {card_id}. Không hiển thị các ngưỡng tách rời điều kiện áp dụng.'
@@ -269,8 +272,14 @@ def main():
     root = Path(os.getenv('SOURCE_PDF_ROOT', '/source_pdf'))
     if not root.is_dir() or not os.access(root, os.W_OK):
         raise ValueError('SOURCE_PDF_ROOT must be mounted writable')
+    parsed_root = Path(os.getenv('PARSED_LIBRARY_ROOT', '/parse_pdf'))
+    web_root = Path(os.getenv('SOURCE_WEB_ROOT', '/source_web'))
+    if not parsed_root.is_dir():
+        raise ValueError('PARSED_LIBRARY_ROOT must be mounted')
+    if not web_root.is_dir() or not os.access(web_root, os.W_OK):
+        raise ValueError('SOURCE_WEB_ROOT must be mounted writable')
     if args.check_config:
-        print('BOT_CONFIG_OK: public access; OpenAI-compatible HTTP/HTTPS; writable PDF mount; no network calls')
+        print('BOT_CONFIG_OK: parsed MinerU library; OpenAI-compatible HTTP/HTTPS; writable source mounts; no network calls')
         return
     if args.check_ai:
         result = ai.ask('Connection test. Return {"ok":true}.', {'test': 'connectivity only; no medical content'})
@@ -296,7 +305,8 @@ def main():
     from app.routed_research import RoutedResearch
     router_ai = CompatibleAI.from_env()
     router_ai.model = os.getenv('AI_ROUTER_MODEL') or ai.model
-    pipeline = RoutedResearch(sessions, ai, root, router, router_ai)
+    pipeline = RoutedResearch(sessions, ai, root, router, router_ai,
+                              library_root=parsed_root, source_web_root=web_root)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = None
         try:

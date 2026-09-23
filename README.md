@@ -2,7 +2,7 @@ New: [Query normalization core v2](docs/QUERY_NORMALIZATION_V2.md).
 
 # Release: revision-bound AI publication and ChatGPT audit
 
-New: [public Telegram + OpenAI-compatible AI automation](docs/AUTOMATION.md).
+New: [MinerU-parse-first Telegram + OpenAI-compatible AI automation](docs/AUTOMATION.md).
 
 See [deployment and audit workflow](docs/DEPLOYMENT.md). Default Compose now pulls GHCR images; use the build override for local builds. Older build/publication instructions below are superseded by this release guide.
 

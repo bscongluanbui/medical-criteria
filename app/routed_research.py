@@ -6,9 +6,9 @@ from app.research import ResearchPipeline, NeedsReview
 
 
 class RoutedResearch:
-    def __init__(self, sessions, ai, root, router, router_ai):
+    def __init__(self, sessions, ai, root, router, router_ai, *, library_root=None, source_web_root=None):
         self.sessions, self.router, self.router_ai = sessions, router, router_ai
-        self.pipeline = ResearchPipeline(sessions, ai, root)
+        self.pipeline = ResearchPipeline(sessions, ai, root, library_root=library_root, source_web_root=source_web_root)
 
     def run(self, job):
         route_data=(job.provenance or {}).get('route')

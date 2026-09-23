@@ -98,7 +98,9 @@ Your existing mount must expose:
 
 ```text
 /home/ubuntu/rclone/papers/criteria_sources/
+  parse_pdf/
   source_pdf/
+  source_web/
   audit_packages/
   audit_results/
 ```
@@ -112,8 +114,9 @@ DRIVE_AUTO_PREPARE=true
 ```
 
 Ensure rclone is mounted first; Docker deliberately refuses to create missing host
-directories. The container user must be able to read all three directories and write
-`audit_packages`. Only that directory is writable inside the container. FUSE access
+directories. The container user must be able to read all five directories and write
+`audit_packages`; the bot writes `source_pdf` and `source_web`. The parsed library is
+read-only inside the containers. FUSE access
 and UID/GID permissions must match the existing rclone configuration; no permissions
 on the entire medical library need to be changed. If rclone is remounted, recreate
 the worker so its bind mounts refer to the current mount.
@@ -145,8 +148,8 @@ and required PDFs are visible in Drive before asking ChatGPT to audit.
 Register retained PDFs with `archive_reference=source_pdf/path/to/document.pdf`
 (relative to criteria_sources). Absolute references under CRITERIA_DRIVE_ROOT are
 also accepted. New versions must use new paths. Source PDF files are never modified
-by the worker. Before importing GPT_VERIFIED, the worker checks the PDF header and
-actual file SHA256 against the registered source; this is not a clinical validation
+by the worker. Before importing GPT_VERIFIED, the worker checks the actual file SHA256
+for PDF, MinerU text or web text, and the PDF header for PDF sources; this is not a clinical validation
 or a complete PDF parser.
 
 Save ChatGPT's complete response as `audit_results/PACKAGE_ID.json`, matching the

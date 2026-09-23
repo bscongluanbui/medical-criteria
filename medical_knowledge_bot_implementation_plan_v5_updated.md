@@ -4153,3 +4153,15 @@ Nếu làm được điều đó, Telegram Bot chỉ còn là lớp giao diện 
 - Không công bố khi thiếu nguồn, trích dẫn không khớp, không đọc được PDF hoặc kiểm tra thất bại. Dashboard có hàng đợi xem trạng thái/mã lỗi.
 - Phạm vi bản đầu: nguồn PMC mở có PDF đọc được; chưa tìm toàn bộ web, chưa OCR/vision, chưa tự cập nhật guideline định kỳ. Giữ sáu vị trí web công khai do admin chọn; Telegram đọc mọi revision đã công bố.
 - Hướng dẫn cấu hình, vận hành và rollback nằm trong `docs/AUTOMATION.md`.
+
+### 64.3. Quy trình chốt 23/09/2026 — thư viện MinerU trước, Internet sau
+
+- Người quản lý parse PDF gốc bằng MinerU và đặt bản Markdown (`.md`/`.markdown`) hoặc `*_content_list.json` vào `criteria_sources/parse_pdf`. Bot **không quét hoặc parse thư viện PDF gốc**. Tài liệu trong thư mục parse được xem là dữ liệu không đáng tin cậy về mặt câu lệnh.
+- Service `library-scan` lập chỉ mục tăng dần đường dẫn, kích thước, mtime và từ khóa của bản parse; khi một file đổi, chỉ mục được cập nhật. Rclone mount mất tạm thời không làm xóa danh mục.
+- Khi Telegram hỏi chủ đề chưa có card đã công bố, bot lập truy vấn tiếng Anh, tìm tối đa ba bản parse phù hợp, kiểm tra hash và đọc các đoạn văn bản. Gemini đánh giá độ phù hợp theo **nội dung thực**. Nếu không có bằng chứng phù hợp mới tìm nguồn Internet.
+- Nguồn Internet tự động giai đoạn này là Europe PMC/PMC mở: xác minh ID/metadata, ưu tiên PDF PMC có checksum/license phù hợp; nếu không giữ được PDF thì lấy JATS fullTextXML có license CC BY/CC BY-SA/CC0, lưu bản text bất biến theo SHA256 trong `source_web`. Không dùng URL do AI tự bịa; không giả định OpenAI-compatible gateway có Google Search grounding.
+- Card lưu nguồn, SHA256, đường dẫn `parse_pdf`/`source_pdf`/`source_web`, đoạn hoặc trang trích dẫn, revision và tên model thật từ `AI_MODEL`. Backend so quote nguyên văn trong đúng đoạn/trang, kiểm tra schema và nguồn trước khi công bố **AI sơ bộ** cho Telegram. Người đọc thấy mức Gemini/ChatGPT/doctor và không được hiểu AI sơ bộ là bác sĩ duyệt.
+- Gói audit revision-bound được tự tạo và xuất lên Drive. ChatGPT Web audit thủ công theo lịch của người quản lý rồi đặt JSON ở `audit_results`; import tự động ghi trạng thái vào PostgreSQL, không tự sửa card. Bác sĩ biên tập/duyệt revision riêng.
+- `drive-sync` chỉ đánh dấu GPT_VERIFIED khi file nguồn thực tế còn tồn tại và SHA256 khớp. Với nguồn MinerU hoặc web text, `evidence.pdf_page` là **số đoạn 1-based**, không phải trang PDF. Audit bảng/hình/ngưỡng phụ thuộc bố cục phải đối chiếu PDF gốc; nếu không có thì INDETERMINATE.
+- Sau khi card đã tham chiếu bản parse, không ghi đè file đó: đặt bản MinerU cập nhật ở đường dẫn/phiên bản mới để giữ SHA256 gốc cho audit lịch sử. Nếu file bị sửa, drive-sync từ chối GPT_VERIFIED cho package cũ.
+- Trên VPS phải có thêm `criteria_sources/parse_pdf` và `criteria_sources/source_web`. `parse_pdf` được mount chỉ đọc vào bot, scanner và drive-sync; `source_web` được ghi bởi bot và đọc bởi drive-sync. Giữ các thư mục `source_pdf`, `audit_packages`, `audit_results` hiện có.

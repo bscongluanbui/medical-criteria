@@ -15,6 +15,7 @@ AI_MAX_OUTPUT_TOKENS=12000
 AI_DAILY_JOB_LIMIT=20
 AI_CHAT_COOLDOWN_SECONDS=60
 CRITERIA_DRIVE_ROOT=/home/ubuntu/rclone/papers/criteria_sources
+LIBRARY_SCAN_INTERVAL=900
 ```
 
 `AI_BASE_URL` có thể là gateway Gemini của bạn (ví dụ `https://gateway.example/v1`).
@@ -41,11 +42,15 @@ không phải cam kết tổng chi phí tiền tệ. Đặt thêm quota tại nh
 
 ## Cập nhật image AMD64/ARM64 và bật bot
 
-Mount rclone phải hoạt động và cho phép user trong container ghi `source_pdf`.
-Bot chỉ mount writable thư mục này; không có quyền ghi cả thư viện hay audit_results.
+Mount rclone phải hoạt động. Đặt bản MinerU `.md`, `.markdown` hoặc
+`*_content_list.json` trong `criteria_sources/parse_pdf`; bot và scanner chỉ đọc
+thư mục đó, không quét PDF gốc. Tạo thêm thư mục `criteria_sources/source_web`
+và cho user container quyền ghi ở `source_web` và `source_pdf`; `audit_packages`
+vẫn cần quyền ghi cho drive-sync.
 
 ```bash
 cd /home/ubuntu/criteria
+mkdir -p /home/ubuntu/rclone/papers/criteria_sources/source_web
 git pull --ff-only
 docker compose pull
 docker compose up -d postgres
@@ -53,8 +58,8 @@ docker compose run --rm migrate
 docker compose run --rm bot python -m app.bot --check-config
 # Tùy chọn: gọi AI một lần để kiểm tra endpoint (có thể tính phí):
 docker compose run --rm bot python -m app.bot --check-ai
-docker compose up -d --no-build api dashboard drive-sync bot
-docker compose logs --tail=100 bot drive-sync
+docker compose up -d --no-build api dashboard drive-sync library-scan bot
+docker compose logs --tail=100 library-scan bot drive-sync
 ```
 
 `--check-config` không gọi dịch vụ bên ngoài, không in token; kiểm tra cấu hình và
@@ -77,17 +82,19 @@ notification queue; không tự đổi token trong một hàng đợi đang ho�
    dùng chung job. `/status` xem yêu cầu gần nhất của chính chat đó.
 5. AI chuyển chủ đề kiến thức chung thành truy vấn khoa học. Yêu cầu cá nhân hóa
    theo bệnh nhân hoặc ngoài phạm vi được dừng ở trạng thái cần xem xét.
-6. Backend tìm nguồn thực trên Europe PMC, AI chọn tối đa ba ứng viên. Backend tải
-   PDF từ PMC Cloud chính thức, không tải URL do mô hình tự bịa.
-7. Kiểm tra license, trạng thái thu hồi, checksum PMC, PDF header; parse trong
-   subprocess giới hạn thời gian/bộ nhớ; lưu PDF theo SHA256 vào `source_pdf`.
-8. AI trích xuất card theo schema. Backend kiểm tra nguồn, hash, số trang và sự
-   hiện diện nguyên văn của trích dẫn trên trang đã dẫn. AI kiểm tra lại claim và
+6. Scanner lập chỉ mục tăng dần bản MinerU trong `parse_pdf`. Bot đọc tối đa ba
+   bản có từ khóa phù hợp, kiểm tra hash; Gemini đánh giá nội dung thực có đủ bằng
+   chứng không. PDF gốc không được bot quét/parse.
+7. Khi thư viện parse thiếu nguồn phù hợp, backend tìm Europe PMC/PMC. AI chọn ID
+   trong kết quả thật. Backend giữ PDF PMC hợp lệ ở `source_pdf`; khi PDF không
+   giữ được, thử JATS fullTextXML có license cho phép, lưu ở `source_web` theo SHA256.
+8. AI trích xuất card theo schema. Backend kiểm tra nguồn, hash, số trang PDF
+   hoặc đoạn văn bản và trích dẫn nguyên văn. AI kiểm tra lại claim và
    điều kiện áp dụng trong một lời gọi riêng; đây vẫn là **AI tự kiểm tra**, không
    phải audit độc lập hoặc chứng nhận y khoa.
 9. Chỉ khi các kiểm tra đạt: lưu nguồn/revision/provenance, công bố AI sơ bộ, tạo
    gói audit; worker Drive đưa gói vào `audit_packages`.
-10. Bot gửi kết quả cho các chat đang chờ. Nếu nguồn thiếu hoặc không đọc được,
+10. Bot gửi kết quả, tên model AI và mức kiểm duyệt cho các chat đang chờ. Nếu nguồn thiếu hoặc không đọc được,
     gửi trạng thái thất bại/cần xem xét, không tự điền ngưỡng từ trí nhớ.
 11. Bạn audit qua ChatGPT Web và lưu JSON vào `audit_results` như trước. Doctor
     audit tiếp tục ở dashboard. Mọi thay đổi nội dung tạo revision riêng.
@@ -98,11 +105,12 @@ Trang công khai vẫn giữ tối đa sáu card do admin chọn; bot đọc t�
 
 ## Phạm vi tìm nguồn của bản đầu
 
-- Tìm kiếm độc lập bằng Europe PMC + PMC Cloud, không giả định gateway có Google
+- Ưu tiên bản MinerU do người quản lý đưa vào `parse_pdf`, rồi tìm Europe PMC + PMC Cloud; không giả định gateway có Google
   Search grounding. Điều này giữ tương thích với endpoint OpenAI Chat Completions.
-- Nguồn tự động được giới hạn ở PDF có license CC BY, CC BY-SA hoặc CC0, không phải
-  toàn bộ guideline trên internet. Không vượt paywall; không tự đọc toàn bộ thư viện
-  Drive. Chưa có OCR hoặc kiểm định bảng/hình bằng thị giác.
+- Nguồn Internet tự động được giới hạn ở PMC mở có PDF hoặc JATS text với license
+  CC BY, CC BY-SA hoặc CC0, không phải toàn bộ guideline trên internet. Không vượt
+  paywall. Bot không chạy MinerU; bản parse được cấp bên ngoài. Bảng/hình chưa được
+  kiểm định bằng thị giác.
 - Parser giới hạn 30 MB/PDF, 150 trang, 180.000 ký tự/tài liệu, timeout 45 giây.
   Tài liệu vượt giới hạn, thiếu PDF hoặc cần OCR có thể dẫn đến needs_review.
 - Không đảm bảo nguồn tìm được là guideline mới nhất. Phiên bản nguồn và trạng thái

@@ -96,6 +96,18 @@ services:
       DRIVE_AUTO_PREPARE: ${DRIVE_AUTO_PREPARE:-true}
     volumes:
       - type: bind
+        source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/parse_pdf
+        target: /drive/parse_pdf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/source_web
+        target: /drive/source_web
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
         source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/source_pdf
         target: /drive/source_pdf
         read_only: true
@@ -134,6 +146,38 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  library-scan:
+    profiles: [bot]
+    image: ${APP_IMAGE:-ghcr.io/bscongluanbui/medical-criteria:latest}
+    command: [python, -m, app.library]
+    environment:
+      DATABASE_URL: postgresql+psycopg://criteria:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/criteria
+      PARSED_LIBRARY_ROOT: /parse_pdf
+      LIBRARY_SCAN_INTERVAL: ${LIBRARY_SCAN_INTERVAL:-900}
+    volumes:
+      - type: bind
+        source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/parse_pdf
+        target: /parse_pdf
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import os,time; from pathlib import Path; assert time.time()-float(Path('/tmp/library-heartbeat').read_text()) < max(60,int(os.getenv('LIBRARY_SCAN_INTERVAL','900')))*2+120"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
   bot:
     profiles: [bot]
     image: ${APP_IMAGE:-ghcr.io/bscongluanbui/medical-criteria:latest}
@@ -150,7 +194,20 @@ services:
       AI_DAILY_JOB_LIMIT: ${AI_DAILY_JOB_LIMIT:-20}
       AI_CHAT_COOLDOWN_SECONDS: ${AI_CHAT_COOLDOWN_SECONDS:-60}
       SOURCE_PDF_ROOT: /source_pdf
+      SOURCE_WEB_ROOT: /source_web
+      PARSED_LIBRARY_ROOT: /parse_pdf
     volumes:
+      - type: bind
+        source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/parse_pdf
+        target: /parse_pdf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/source_web
+        target: /source_web
+        bind:
+          create_host_path: false
       - type: bind
         source: ${CRITERIA_DRIVE_ROOT:-/home/ubuntu/rclone/papers/criteria_sources}/source_pdf
         target: /source_pdf
@@ -159,6 +216,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      library-scan:
+        condition: service_healthy
     healthcheck:
       test: [CMD, python, -c, "import time; from pathlib import Path; assert time.time()-float(Path('/tmp/bot-heartbeat').read_text()) < 180"]
       interval: 30s

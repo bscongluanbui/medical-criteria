@@ -113,6 +113,9 @@ class Literature:
             raise SourceError('INVALID_PDF')
         return data, metadata['license_code']+'; PMC dataset version '+str(metadata['version'])
 
+    def retrieve_web(self, candidate):
+        return retrieve_web_article(candidate)
+
 
 def pdf_from_archive(data):
     # Stream archive, never extract paths or links to the filesystem.
@@ -165,3 +168,82 @@ def retain_pdf(root, data):
         if temp.exists():
             temp.unlink()
     return sha
+
+
+def parse_full_text_xml(data):
+    """Return bounded, numbered text segments from a licensed Europe PMC JATS article."""
+    if b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():
+        raise SourceError('XML_ENTITIES_REJECTED')
+    try:
+        article = ET.fromstring(data)
+    except ET.ParseError:
+        raise SourceError('WEB_ARTICLE_INVALID_XML') from None
+    license_nodes = article.findall('.//{*}article-meta/{*}permissions/{*}license')
+    license_text = ' '.join(' '.join(node.itertext()) for node in license_nodes).lower()
+    license_urls = ' '.join(str(value).lower() for node in license_nodes for value in node.attrib.values())
+    license_label = license_text + ' ' + license_urls
+    allowed = ('creativecommons.org/licenses/by/' in license_label or
+               'creativecommons.org/licenses/by-sa/' in license_label or
+               'creativecommons.org/publicdomain/zero/' in license_label)
+    if not allowed:
+        raise SourceError('WEB_ARTICLE_LICENSE_NOT_RETAINABLE')
+    body = article.find('.//{*}body')
+    if body is None:
+        raise SourceError('WEB_ARTICLE_NO_BODY')
+    paragraphs = []
+    for node in body.iter():
+        if node.tag.rsplit('}', 1)[-1] != 'p':
+            continue
+        line = ' '.join(' '.join(node.itertext()).split())
+        if len(line) >= 20:
+            paragraphs.append(line)
+    if not paragraphs:
+        raise SourceError('WEB_ARTICLE_NO_EXTRACTABLE_TEXT')
+    segments, current = [], ''
+    for line in paragraphs:
+        if len(current) + len(line) > 5000 and current:
+            segments.append(current)
+            current = ''
+        if len(line) > 5000:
+            line = line[:5000]
+        current += ('\n' if current else '') + line
+    if current:
+        segments.append(current)
+    if len(segments) > 100 or sum(map(len, segments)) > 300000:
+        raise SourceError('WEB_ARTICLE_TOO_LARGE')
+    license_name = 'CC BY-SA' if 'creativecommons.org/licenses/by-sa/' in license_label else 'CC BY' if 'creativecommons.org/licenses/by/' in license_label else 'CC0'
+    return segments, license_name
+
+
+def retain_web(root, segments):
+    root = Path(root).resolve()
+    if not root.is_dir():
+        raise SourceError('SOURCE_WEB_MOUNT_MISSING')
+    data = ('\n\n'.join(f'[SEGMENT {index}]\n{text}' for index, text in enumerate(segments, 1)) + '\n').encode('utf-8')
+    sha = hashlib.sha256(data).hexdigest()
+    path = root / (sha + '.txt')
+    if path.is_symlink():
+        raise SourceError('SOURCE_SYMLINK_REJECTED')
+    if path.exists():
+        if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
+            raise SourceError('RETAINED_SOURCE_HASH_MISMATCH')
+        return sha
+    temp = root / ('.'+sha+'.'+uuid4().hex+'.tmp')
+    try:
+        with temp.open('xb') as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temp, path)
+    finally:
+        if temp.exists():
+            temp.unlink()
+    return sha
+
+
+def retrieve_web_article(candidate):
+    pmcid = candidate['pmcid']
+    if not re.fullmatch(r'PMC[0-9]+', pmcid):
+        raise SourceError('INVALID_PMCID')
+    data = fetch(f'https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML', limit=2_000_000)
+    return parse_full_text_xml(data)
